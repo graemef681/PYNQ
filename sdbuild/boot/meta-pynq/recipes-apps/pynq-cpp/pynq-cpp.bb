@@ -15,6 +15,8 @@ SRC_URI = "file://cpp/CMakeLists.txt \
            file://cpp/pynq-remote.cc \
            file://cpp/device.cc \
            file://cpp/device.h \
+           file://cpp/dma.cc \
+           file://cpp/dma.h \
            file://cpp/mmio.cc \
            file://cpp/mmio.h \
            file://cpp/buffer.cc \
@@ -22,6 +24,8 @@ SRC_URI = "file://cpp/CMakeLists.txt \
            file://cpp/gpio.cc \
            file://cpp/gpio.h \
            file://protos/buffer.proto \
+           file://protos/gpio.proto \
+           file://protos/dma.proto \
            file://protos/gpio.proto \
            file://protos/mmio.proto \
            file://protos/remote_device.proto \

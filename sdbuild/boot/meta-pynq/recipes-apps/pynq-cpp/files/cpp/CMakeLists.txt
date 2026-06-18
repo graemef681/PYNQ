@@ -24,6 +24,9 @@ get_filename_component(buffer_proto_path "${buffer_proto}" PATH)
 get_filename_component(gpio_proto "../protos/gpio.proto" ABSOLUTE)
 get_filename_component(gpio_proto_path "${gpio_proto}" PATH)
 
+get_filename_component(dma_proto "../protos/dma.proto" ABSOLUTE)
+get_filename_component(dma_proto_path "${dma_proto}" PATH)
+
 # Generated sources
 set(remote_device_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/remote_device.pb.cc")
 set(remote_device_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/remote_device.pb.h")
@@ -45,11 +48,17 @@ set(gpio_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/gpio.pb.h")
 set(gpio_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/gpio.grpc.pb.cc")
 set(gpio_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/gpio.grpc.pb.h")
 
+set(dma_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/dma.pb.cc")
+set(dma_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/dma.pb.h")
+set(dma_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/dma.grpc.pb.cc")
+set(dma_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/dma.grpc.pb.h")
+
 add_custom_command(
   OUTPUT "${remote_device_proto_srcs}" "${remote_device_proto_hdrs}" "${remote_device_grpc_srcs}" "${remote_device_grpc_hdrs}" 
   "${mmio_proto_srcs}" "${mmio_proto_hdrs}" "${mmio_grpc_srcs}" "${mmio_grpc_hdrs}"
   "${buffer_proto_srcs}" "${buffer_proto_hdrs}" "${buffer_grpc_srcs}" "${buffer_grpc_hdrs}"
   "${gpio_proto_srcs}" "${gpio_proto_hdrs}" "${gpio_grpc_srcs}" "${gpio_grpc_hdrs}"
+  "${dma_proto_srcs}" "${dma_proto_hdrs}" "${dma_grpc_srcs}" "${dma_grpc_hdrs}"
   COMMAND ${_PROTOBUF_PROTOC}
   ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
   --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
@@ -59,7 +68,8 @@ add_custom_command(
   "${mmio_proto}"
   "${buffer_proto}"
   "${gpio_proto}"
-  DEPENDS "${remote_device_proto}" "${mmio_proto}" "${buffer_proto}" "${gpio_proto}")
+  "${dma_proto}"
+  DEPENDS "${remote_device_proto}" "${mmio_proto}" "${buffer_proto}" "${gpio_proto}" "${dma_proto}")
 
 # RFSoC-only proto generation
 if(RFSOC)
@@ -193,6 +203,13 @@ add_library(gpio_grpc_proto
   ${gpio_proto_srcs}
   ${gpio_proto_hdrs})
 
+# dma_grpc_proto
+add_library(dma_grpc_proto
+  ${dma_grpc_srcs}
+  ${dma_grpc_hdrs}
+  ${dma_proto_srcs}
+  ${dma_proto_hdrs})
+
 # RFSoC-only proto libraries, source list, and link/deps lists.
 # These variables are empty on non-RFSoC boards so the splat below produces
 # vanilla MMIO/GPIO/Buffer-only build.
@@ -223,9 +240,9 @@ if(RFSOC)
     list(APPEND RFSOC_SYSTEM_LINKS ${METAL_LIBRARY} ${CMAKE_DL_LIBS})
 endif()
 
-# Main pynq library
 add_library(pynq
   buffer.cc
+  dma.cc
   mmio.cc
   device.cc
   gpio.cc
@@ -238,6 +255,7 @@ add_dependencies(pynq
   mmio_grpc_proto
   remote_device_grpc_proto
   gpio_grpc_proto
+  dma_grpc_proto
   ${RFSOC_DEPS}
 )
 
@@ -267,6 +285,9 @@ foreach(_target
     remote_device_grpc_proto
     mmio_grpc_proto
     buffer_grpc_proto
+    gpio_grpc_proto
+    ${RFSOC_LINKS}
+    dma_grpc_proto
     gpio_grpc_proto
     ${RFSOC_LINKS}
     ${_REFLECTION}

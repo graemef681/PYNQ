@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package dma;
+
+service Dma {
+    rpc bind_dma(BindDmaRequest) returns (BindDmaResponse) {}
+    rpc transfer(TransferRequest) returns (TransferResponse) {}
+    rpc wait(WaitRequest) returns (WaitResponse) {}
+    rpc stop(StopRequest) returns (StopResponse) {}
+    rpc status(StatusRequest) returns (StatusResponse) {}
+}
+
+enum ChannelDirection {
+    CHANNEL_DIRECTION_UNSPECIFIED = 0;
+    CHANNEL_DIRECTION_MM2S = 1;
+    CHANNEL_DIRECTION_S2MM = 2;
+}
+
+enum CompletionMode {
+    COMPLETION_MODE_AUTO = 0;
+    COMPLETION_MODE_POLL = 1;
+    COMPLETION_MODE_INTERRUPT = 2;
+}
+
+enum TransferMode {
+    TRANSFER_MODE_SIMPLE = 0;
+    TRANSFER_MODE_SCATTER_GATHER = 1;
+}
+
+message BindDmaRequest {
+    // MMIO handle for the AXI DMA control interface. This remains the stable
+    // identity for the DMA instance and can still be used for ordinary MMIO RPCs.
+    string mmio_id = 1;
+}
+
+message BindDmaResponse {
+    bool status = 1;
+    optional string msg = 2;
+}
+
+message TransferRequest {
+    // MMIO handle for the AXI DMA control interface. The server resolves
+    // this to the DMA engine instance that owns both MM2S and S2MM channels.
+    string mmio_id = 1;
+    // Direction selects the channel within the DMA engine.
+    ChannelDirection direction = 2;
+    // Remote buffer handle allocated by the buffer service.
+    string buffer_id = 3;
+    // Byte offset into the remote buffer.
+    uint64 start = 4;
+    // Number of bytes to transfer. Zero means "rest of buffer from start".
+    uint64 nbytes = 5;
+    TransferMode transfer_mode = 7;
+    bool cyclic = 8;
+}
+
+message TransferResponse {
+    bool status = 1;
+    optional string msg = 2;
+    optional string transfer_id = 3;
+}
+
+message WaitRequest {
+    string transfer_id = 1;
+    CompletionMode completion_mode = 2;
+    uint64 timeout_ms = 3;
+}
+
+message WaitResponse {
+    bool status = 1;
+    optional string msg = 2;
+    optional uint64 transferred = 3;
+    optional uint32 dma_status = 4;
+}
+
+message StopRequest {
+    string transfer_id = 1;
+}
+
+message StopResponse {
+    bool status = 1;
+    optional string msg = 2;
+    optional uint32 dma_status = 3;
+}
+
+message StatusRequest {
+    string transfer_id = 1;
+}
+
+message StatusResponse {
+    bool status = 1;
+    optional string msg = 2;
+    optional bool running = 3;
+    optional bool idle = 4;
+    optional bool halted = 5;
+    optional uint32 dma_status = 6;
+    optional uint64 transferred = 7;
+}

@@ -26,12 +26,14 @@
 #include <mmio.grpc.pb.h>
 #include <buffer.grpc.pb.h>
 #include <gpio.grpc.pb.h>
+#include <dma.grpc.pb.h>
 #ifdef RFSOC
 #include <xrfclk.grpc.pb.h>
 #include <xrfdc.grpc.pb.h>
 #endif
 
 #include "buffer.cc"
+#include "dma.h"
 #include "mmio.h"
 #include "device.h"
 #include "gpio.h"
@@ -158,6 +160,16 @@ public:
     {
         device_name = device.get_info<xrt::info::device::name>();
         std::cout << "device name: " << device_name << "\n";
+    }
+
+    BufferRemote *findBuffer(const std::string &buffer_id)
+    {
+        auto it = buffers_.find(buffer_id);
+        if (it != buffers_.end())
+        {
+            return it->second.get();
+        }
+        return nullptr;
     }
 
 private:
@@ -671,6 +683,246 @@ public:
     }
 };
 
+class DmaImpl final : public dma::Dma::Service
+{
+private:
+    struct TransferRoute
+    {
+        std::string mmio_id;
+        DmaChannelDirection direction = DmaChannelDirection::MM2S;
+    };
+
+    MMIOImpl &mmio_service_;
+    BufferImpl &buffer_service_;
+    std::unordered_map<std::string, std::unique_ptr<DMA>> dmas_;
+    std::unordered_map<std::string, TransferRoute> transfer_routes_;
+
+    DMA &get_or_create_dma(const std::string &mmio_id, MMIO &mmio)
+    {
+        auto it = dmas_.find(mmio_id);
+        if (it != dmas_.end())
+        {
+            return *(it->second);
+        }
+
+        auto dma_instance = std::make_unique<DMA>(mmio);
+        DMA &dma_ref = *dma_instance;
+        dmas_[mmio_id] = std::move(dma_instance);
+        return dma_ref;
+    }
+
+    DmaChannelDirection to_native_direction(dma::ChannelDirection direction) const
+    {
+        if (direction == dma::CHANNEL_DIRECTION_S2MM)
+        {
+            return DmaChannelDirection::S2MM;
+        }
+        return DmaChannelDirection::MM2S;
+    }
+
+    DmaCompletionMode to_native_completion_mode(dma::CompletionMode mode) const
+    {
+        if (mode == dma::COMPLETION_MODE_POLL)
+        {
+            return DmaCompletionMode::Poll;
+        }
+        if (mode == dma::COMPLETION_MODE_INTERRUPT)
+        {
+            return DmaCompletionMode::Interrupt;
+        }
+        return DmaCompletionMode::Auto;
+    }
+
+    DmaTransferMode to_native_transfer_mode(dma::TransferMode mode) const
+    {
+        if (mode == dma::TRANSFER_MODE_SCATTER_GATHER)
+        {
+            return DmaTransferMode::ScatterGather;
+        }
+        return DmaTransferMode::Simple;
+    }
+
+    DMAChannel *select_channel(DMA &dma_instance, DmaChannelDirection direction)
+    {
+        if (direction == DmaChannelDirection::S2MM)
+        {
+            return &dma_instance.recvchannel;
+        }
+        return &dma_instance.sendchannel;
+    }
+
+    const TransferRoute *find_route(const std::string &transfer_id) const
+    {
+        auto it = transfer_routes_.find(transfer_id);
+        if (it != transfer_routes_.end())
+        {
+            return &it->second;
+        }
+        return nullptr;
+    }
+
+public:
+    DmaImpl(MMIOImpl &mmio_service, BufferImpl &buffer_service)
+        : mmio_service_(mmio_service),
+          buffer_service_(buffer_service)
+    {
+    }
+
+    Status bind_dma(ServerContext *context, const dma::BindDmaRequest *request, dma::BindDmaResponse *response) override
+    {
+        MMIO *mmio = mmio_service_.findMMIO(request->mmio_id());
+        if (!mmio)
+        {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "MMIO Object not found.");
+        }
+
+        get_or_create_dma(request->mmio_id(), *mmio);
+        response->set_status(true);
+        return grpc::Status::OK;
+    }
+
+    Status transfer(ServerContext *context, const dma::TransferRequest *request, dma::TransferResponse *response) override
+    {
+        MMIO *mmio = mmio_service_.findMMIO(request->mmio_id());
+        if (!mmio)
+        {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "MMIO Object not found.");
+        }
+
+        BufferRemote *buffer = buffer_service_.findBuffer(request->buffer_id());
+        if (!buffer)
+        {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Buffer not found.");
+        }
+
+        DMA &dma_instance = get_or_create_dma(request->mmio_id(), *mmio);
+        DmaChannelDirection direction = to_native_direction(request->direction());
+        DMAChannel *channel = select_channel(dma_instance, direction);
+
+        DmaTransferResult result = channel->transfer(
+            *buffer,
+            request->start(),
+            request->nbytes(),
+            to_native_transfer_mode(request->transfer_mode()),
+            request->cyclic());
+
+        response->set_status(result.success);
+        if (!result.message.empty())
+        {
+            response->set_msg(result.message);
+        }
+        if (!result.transfer_id.empty())
+        {
+            response->set_transfer_id(result.transfer_id);
+        }
+
+        if (result.success)
+        {
+            transfer_routes_[result.transfer_id] = TransferRoute{request->mmio_id(), direction};
+        }
+
+        return grpc::Status::OK;
+    }
+
+    Status wait(ServerContext *context, const dma::WaitRequest *request, dma::WaitResponse *response) override
+    {
+        const TransferRoute *route = find_route(request->transfer_id());
+        if (!route)
+        {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Transfer not found.");
+        }
+
+        auto dma_it = dmas_.find(route->mmio_id);
+        if (dma_it == dmas_.end())
+        {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "DMA instance not found.");
+        }
+
+        DMAChannel *channel = select_channel(*(dma_it->second), route->direction);
+        DmaWaitResult result = channel->wait(
+            to_native_completion_mode(request->completion_mode()),
+            request->timeout_ms());
+
+        response->set_status(result.success);
+        if (!result.message.empty())
+        {
+            response->set_msg(result.message);
+        }
+        response->set_transferred(result.transferred);
+        response->set_dma_status(result.dma_status);
+
+        if (result.success)
+        {
+            transfer_routes_.erase(request->transfer_id());
+        }
+
+        return grpc::Status::OK;
+    }
+
+    Status stop(ServerContext *context, const dma::StopRequest *request, dma::StopResponse *response) override
+    {
+        const TransferRoute *route = find_route(request->transfer_id());
+        if (!route)
+        {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Transfer not found.");
+        }
+
+        auto dma_it = dmas_.find(route->mmio_id);
+        if (dma_it == dmas_.end())
+        {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "DMA instance not found.");
+        }
+
+        DMAChannel *channel = select_channel(*(dma_it->second), route->direction);
+        DmaWaitResult result = channel->stop();
+
+        response->set_status(result.success);
+        if (!result.message.empty())
+        {
+            response->set_msg(result.message);
+        }
+        response->set_dma_status(result.dma_status);
+
+        if (result.success)
+        {
+            transfer_routes_.erase(request->transfer_id());
+        }
+
+        return grpc::Status::OK;
+    }
+
+    Status status(ServerContext *context, const dma::StatusRequest *request, dma::StatusResponse *response) override
+    {
+        const TransferRoute *route = find_route(request->transfer_id());
+        if (!route)
+        {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Transfer not found.");
+        }
+
+        auto dma_it = dmas_.find(route->mmio_id);
+        if (dma_it == dmas_.end())
+        {
+            return grpc::Status(grpc::StatusCode::NOT_FOUND, "DMA instance not found.");
+        }
+
+        DMAChannel *channel = select_channel(*(dma_it->second), route->direction);
+        DmaStatusResult result = channel->status();
+
+        response->set_status(result.success);
+        if (!result.message.empty())
+        {
+            response->set_msg(result.message);
+        }
+        response->set_running(result.running);
+        response->set_idle(result.idle);
+        response->set_halted(result.halted);
+        response->set_dma_status(result.dma_status);
+        response->set_transferred(result.transferred);
+
+        return grpc::Status::OK;
+    }
+};
+
 class GPIOImpl final : public Gpio::Service
 {
     /**
@@ -1081,6 +1333,7 @@ void RunServer(uint16_t port)
     RemoteDeviceImpl remote_device_service; // Create remote_device rpc handler
     MMIOImpl mmio_service;                  // Create MMIO rpc handler
     BufferImpl buffer_service;              // Create Buffer rpc handler
+    DmaImpl dma_service(mmio_service, buffer_service); // Create DMA rpc handler
     GPIOImpl gpio_service;                  // Create Gpio rpc handler
 #ifdef RFSOC
     XrfclkImpl xrfclk_service;              // Create Xrfclk rpc handler
@@ -1096,6 +1349,7 @@ void RunServer(uint16_t port)
     builder.RegisterService(&remote_device_service); // Add to RPC running server.
     builder.RegisterService(&mmio_service);
     builder.RegisterService(&buffer_service);
+    builder.RegisterService(&dma_service);
     builder.RegisterService(&gpio_service);
 #ifdef RFSOC
     builder.RegisterService(&xrfclk_service);
