@@ -636,6 +636,14 @@ public:
      */
     Status read(ServerContext *context, const ReadRequest *request, ReadResponse *response) override
     {
+        #ifdef DEBUG
+        std::cout << "RPC MMIO READ REQUEST: "
+                  << "mmio_id=" << request->mmio_id() << ", "
+                  << "offset=" << request->offset() << ", "
+                  << "length=" << request->length() << ", "
+                  << "word_order=" << request->word_order()
+                  << std::endl;
+        #endif
         MMIO *mmio = findMMIO(request->mmio_id());
         if (!mmio)
         {
@@ -664,7 +672,7 @@ public:
     Status write(ServerContext *context, const WriteRequest *request, WriteResponse *response) override
     {
         #ifdef DEBUG
-        std::cout << "Function: write, "
+        std::cout << "RPC MMIO WRITE REQUEST: "
                   << "mmio_id=" << request->mmio_id() << ", "
                   << "offset=" << request->offset() << ", "
                   << "data=" << *reinterpret_cast<const uint32_t *>(request->data().data())
@@ -770,6 +778,11 @@ public:
 
     Status bind_dma(ServerContext *context, const dma::BindDmaRequest *request, dma::BindDmaResponse *response) override
     {
+        #ifdef DEBUG
+        std::cout << "RPC DMA BIND REQUEST: "
+                  << "mmio_id=" << request->mmio_id()
+                  << std::endl;
+        #endif
         MMIO *mmio = mmio_service_.findMMIO(request->mmio_id());
         if (!mmio)
         {
@@ -783,6 +796,17 @@ public:
 
     Status transfer(ServerContext *context, const dma::TransferRequest *request, dma::TransferResponse *response) override
     {
+        #ifdef DEBUG
+        std::cout << "RPC DMA TRANSFER REQUEST: "
+                  << "mmio_id=" << request->mmio_id() << ", "
+                  << "buffer_id=" << request->buffer_id() << ", "
+                  << "direction=" << request->direction() << ", "
+                  << "start=" << request->start() << ", "
+                  << "nbytes=" << request->nbytes() << ", "
+                  << "transfer_mode=" << request->transfer_mode() << ", "
+                  << "cyclic=" << (request->cyclic() ? "true" : "false")
+                  << std::endl;
+        #endif
         MMIO *mmio = mmio_service_.findMMIO(request->mmio_id());
         if (!mmio)
         {
@@ -826,6 +850,13 @@ public:
 
     Status wait(ServerContext *context, const dma::WaitRequest *request, dma::WaitResponse *response) override
     {
+        #ifdef DEBUG
+        std::cout << "RPC DMA WAIT REQUEST: "
+                  << "transfer_id=" << request->transfer_id() << ", "
+                  << "completion_mode=" << request->completion_mode() << ", "
+                  << "timeout_ms=" << request->timeout_ms()
+                  << std::endl;
+        #endif
         const TransferRoute *route = find_route(request->transfer_id());
         if (!route)
         {
@@ -861,6 +892,11 @@ public:
 
     Status stop(ServerContext *context, const dma::StopRequest *request, dma::StopResponse *response) override
     {
+        #ifdef DEBUG
+        std::cout << "RPC DMA STOP REQUEST: "
+                  << "transfer_id=" << request->transfer_id()
+                  << std::endl;
+        #endif
         const TransferRoute *route = find_route(request->transfer_id());
         if (!route)
         {
@@ -893,6 +929,11 @@ public:
 
     Status status(ServerContext *context, const dma::StatusRequest *request, dma::StatusResponse *response) override
     {
+        #ifdef DEBUG
+        std::cout << "RPC DMA STATUS REQUEST: "
+                  << "transfer_id=" << request->transfer_id()
+                  << std::endl;
+        #endif
         const TransferRoute *route = find_route(request->transfer_id());
         if (!route)
         {

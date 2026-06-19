@@ -3,10 +3,12 @@
 import grpc
 import warnings
 
-import dma_pb2 as dma__pb2
+from pynq.remote import dma_pb2 as dma__pb2
 
-GRPC_GENERATED_VERSION = '1.81.1'
+GRPC_GENERATED_VERSION = '1.64.0'
 GRPC_VERSION = grpc.__version__
+EXPECTED_ERROR_RELEASE = '1.65.0'
+SCHEDULED_RELEASE_DATE = 'June 25, 2024'
 _version_not_supported = False
 
 try:
@@ -16,16 +18,19 @@ except ImportError:
     _version_not_supported = True
 
 if _version_not_supported:
-    raise RuntimeError(
+    warnings.warn(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in dma_pb2_grpc.py depends on'
+        + f' but the generated code in dma_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
+        + f' This warning will become an error in {EXPECTED_ERROR_RELEASE},'
+        + f' scheduled for release on {SCHEDULED_RELEASE_DATE}.',
+        RuntimeWarning
     )
 
 
-class DmaStub:
+class DmaStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -61,7 +66,7 @@ class DmaStub:
                 _registered_method=True)
 
 
-class DmaServicer:
+class DmaServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def bind_dma(self, request, context):
@@ -130,7 +135,7 @@ def add_DmaServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class Dma:
+class Dma(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod

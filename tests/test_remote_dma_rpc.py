@@ -5,7 +5,7 @@ import os
 import pytest
 import numpy as np
 
-os.environ["PYNQ_REMOTE_DEVICES"] = "192.168.0.238"
+os.environ["PYNQ_REMOTE_DEVICES"] = "192.168.2.79"
 
 
 @pytest.mark.remote
@@ -15,7 +15,7 @@ def test_remote_dma_rpc():
         pytest.skip("PYNQ_REMOTE_DEVICES environment variable not set")
 
     test_dir = os.path.dirname(os.path.abspath(__file__))
-    overlay_path = os.path.join(test_dir, "resizer.bit")
+    overlay_path = os.path.join(test_dir, "resizer.xsa")
     if not os.path.exists(overlay_path):
         pytest.skip(f"Overlay not found: {overlay_path}")
 
@@ -37,10 +37,11 @@ def test_remote_dma_rpc():
     dma = design.axi_dma_0
     resizer = design.resize_accel_0
     device = dma.device
+    remote_mmio = device.mmap(dma.mmio.base_addr, dma.mmio.length)
 
     dma_stub = dma_pb2_grpc.DmaStub(device.client.channel)
     bind_response = dma_stub.bind_dma(
-        dma_pb2.BindDmaRequest(mmio_id=dma.mmio.mmio_id)
+        dma_pb2.BindDmaRequest(mmio_id=remote_mmio.mmio_id)
     )
     if getattr(bind_response, "msg", ""):
         raise RuntimeError(bind_response.msg)
@@ -62,7 +63,7 @@ def test_remote_dma_rpc():
 
     tx_response = dma_stub.transfer(
         dma_pb2.TransferRequest(
-            mmio_id=dma.mmio.mmio_id,
+            mmio_id=remote_mmio.mmio_id,
             direction=dma_pb2.CHANNEL_DIRECTION_MM2S,
             buffer_id=in_buffer.buffer_id,
             start=0,
@@ -76,7 +77,7 @@ def test_remote_dma_rpc():
 
     rx_response = dma_stub.transfer(
         dma_pb2.TransferRequest(
-            mmio_id=dma.mmio.mmio_id,
+            mmio_id=remote_mmio.mmio_id,
             direction=dma_pb2.CHANNEL_DIRECTION_S2MM,
             buffer_id=out_buffer.buffer_id,
             start=0,
