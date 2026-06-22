@@ -1,11 +1,10 @@
-# Copyright (C) 2026 Advanced Micro Devices, Inc.
-# SPDX-License-Identifier: BSD-3-Clause
+## Use custom DMA RPCs to invoke DMA transfer instead of MMIO RPCs with RemoteMMIO Hook
 
 import os
 import pytest
 import numpy as np
 
-os.environ["PYNQ_REMOTE_DEVICES"] = "192.168.2.79"
+os.environ["PYNQ_REMOTE_DEVICES"] = "192.168.2.197"
 
 
 @pytest.mark.remote

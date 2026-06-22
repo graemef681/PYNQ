@@ -7,25 +7,25 @@ import pytest
 import numpy as np
 
 # Setup PYNQ environment variable - REQUIRED for PYNQ.remote to work
-os.environ["PYNQ_REMOTE_DEVICES"] = "192.168.0.238"
+os.environ["PYNQ_REMOTE_DEVICES"] = "192.168.2.197"
 
 @pytest.mark.remote
 def test_remote():
     """Test basic PYNQ.remote functionality.
-    
+
     Tests overlay loading, buffer allocation, DMA transfers, and data integrity
     using the resizer accelerator. Requires PYNQ_REMOTE_DEVICES to be set.
     """
-    
+
     # Verify the environment variable is set
     if not os.environ.get("PYNQ_REMOTE_DEVICES"):
         pytest.skip("PYNQ_REMOTE_DEVICES environment variable not set - required for remote PYNQ")
-     
+
     # Get the path to the overlay file in the tests directory
     test_dir = os.path.dirname(os.path.abspath(__file__))
-    overlay_path = os.path.join(test_dir, "resizer.bit")
+    overlay_path = os.path.join(test_dir, "resizer.xsa")
     if not os.path.exists(overlay_path):
-        pytest.skip(f"Overlay not found: {overlay_path}")   
+        pytest.skip(f"Overlay not found: {overlay_path}")
 
     try:
         from pynq import allocate, Overlay
@@ -44,10 +44,10 @@ def test_remote():
     resize_design = Overlay(overlay_path)
     dma = resize_design.axi_dma_0
     resizer = resize_design.resize_accel_0
-    
+
     size = 500
     fake_img = np.random.randint(0, 256, (size, size, 3), dtype=np.uint8)
-    
+
     # Allocate input/output buffers
     in_buffer = allocate(shape=(size, size, 3), dtype=np.uint8, cacheable=1)
     out_buffer = allocate(shape=(size, size, 3), dtype=np.uint8, cacheable=1)

@@ -2,7 +2,6 @@
  * File: dma.cc
  * Description: Board-side helper classes for remote DMA control.
  * Engineer Name: Graeme Fitzpatrick
- * Additional Contributors: OpenAI Codex
  * Project: PYNQ.remote
  * Created: 2026-06-16
  *
