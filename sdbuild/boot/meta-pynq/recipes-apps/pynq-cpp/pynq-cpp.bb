@@ -12,7 +12,7 @@ DEPENDS = "protobuf grpc protobuf-native grpc-native xrt"
 # The PYNQ Makefile writes a per-project bbappend that appends "rfsoc" to
 # PACKAGECONFIG when RFSoC_<board>=1.
 PACKAGECONFIG ??= "axidma"
-PACKAGECONFIG[axidma] = "-DUSE_XAXIDMA=ON,-DUSE_XAXIDMA=OFF,axidma,axidma"
+PACKAGECONFIG[axidma] = "-DUSE_XAXIDMA=ON,-DUSE_XAXIDMA=OFF,axidma,"
 PACKAGECONFIG[rfsoc] = "-DRFSOC=ON,-DRFSOC=OFF,rfdc libmetal,rfdc libmetal"
 
 SRC_URI = "file://cpp/CMakeLists.txt \
