@@ -158,10 +158,6 @@ if(USE_XAXIDMA)
       NAMES axidma
       PATHS "${CMAKE_SYSROOT}/usr/lib" "${CMAKE_SYSROOT}/lib"
       NO_DEFAULT_PATH)
-    find_library(XILSTANDALONE_LIBRARY
-      NAMES xilstandalone xil
-      PATHS "${CMAKE_SYSROOT}/usr/lib" "${CMAKE_SYSROOT}/lib"
-      NO_DEFAULT_PATH)
 
     if(NOT XAXIDMA_INCLUDE_DIR)
         message(FATAL_ERROR "Could not find xaxidma.h in the Yocto sysroot. Enable the axidma recipe or disable USE_XAXIDMA.")
@@ -169,17 +165,13 @@ if(USE_XAXIDMA)
     if(NOT AXIDMA_LIBRARY)
         message(FATAL_ERROR "Could not find libaxidma.a in the Yocto sysroot. Enable the axidma recipe or disable USE_XAXIDMA.")
     endif()
-    if(NOT XILSTANDALONE_LIBRARY)
-        message(FATAL_ERROR "Could not find xilstandalone/libxil in the Yocto sysroot. Enable the standalone recipe or disable USE_XAXIDMA.")
-    endif()
 
-    add_compile_definitions(USE_XAXIDMA)
+    add_compile_definitions(USE_XAXIDMA SDT)
     list(APPEND XAXIDMA_INCLUDE_DIRS ${XAXIDMA_INCLUDE_DIR})
-    list(APPEND XAXIDMA_SYSTEM_LINKS ${AXIDMA_LIBRARY} ${XILSTANDALONE_LIBRARY})
+    list(APPEND XAXIDMA_SYSTEM_LINKS ${AXIDMA_LIBRARY})
 
     message(STATUS "Found XAxiDma include dir: ${XAXIDMA_INCLUDE_DIR}")
     message(STATUS "Found XAxiDma library: ${AXIDMA_LIBRARY}")
-    message(STATUS "Found xilstandalone/libxil: ${XILSTANDALONE_LIBRARY}")
 endif()
 
 # Define an option for using custom XRT paths
