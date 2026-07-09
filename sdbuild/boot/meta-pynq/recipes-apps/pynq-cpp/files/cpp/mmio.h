@@ -49,6 +49,12 @@ public:
      * @param offset Offset from the base address.
      */
     void write(uint32_t data, uint64_t offset);
+
+    /**
+     * @brief Returns the mapped virtual base address for this MMIO region.
+     * @return Virtual address usable by userspace drivers.
+     */
+    uintptr_t virtual_address() const;
 };
 
 #endif // MMIO_H

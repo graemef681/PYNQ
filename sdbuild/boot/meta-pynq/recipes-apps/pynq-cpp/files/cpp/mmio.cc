@@ -71,3 +71,13 @@ void MMIO::write(uint32_t data, uint64_t offset)
 #endif
     ptr[idx] = data;
 }
+
+uintptr_t MMIO::virtual_address() const
+{
+    if (mapped_base == nullptr)
+    {
+        return 0;
+    }
+
+    return reinterpret_cast<uintptr_t>(static_cast<char *>(mapped_base) + virt_offset);
+}

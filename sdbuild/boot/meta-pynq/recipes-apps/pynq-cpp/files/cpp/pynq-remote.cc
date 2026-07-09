@@ -705,15 +705,22 @@ private:
     std::unordered_map<std::string, std::unique_ptr<DMA>> dmas_;
     std::unordered_map<std::string, TransferRoute> transfer_routes_;
 
-    DMA &get_or_create_dma(const std::string &mmio_id, MMIO &mmio)
+    DMA &get_or_create_dma(const std::string &mmio_id, MMIO &mmio, const std::optional<DmaHardwareConfig> &config = std::nullopt)
     {
         auto it = dmas_.find(mmio_id);
         if (it != dmas_.end())
         {
+            if (config.has_value() && !it->second->using_xaxidma())
+            {
+                auto dma_instance = std::make_unique<DMA>(mmio, config);
+                DMA &dma_ref = *dma_instance;
+                dmas_[mmio_id] = std::move(dma_instance);
+                return dma_ref;
+            }
             return *(it->second);
         }
 
-        auto dma_instance = std::make_unique<DMA>(mmio);
+        auto dma_instance = std::make_unique<DMA>(mmio, config);
         DMA &dma_ref = *dma_instance;
         dmas_[mmio_id] = std::move(dma_instance);
         return dma_ref;
@@ -750,6 +757,33 @@ private:
         return DmaTransferMode::Simple;
     }
 
+    std::optional<DmaHardwareConfig> to_native_config(const dma::BindDmaRequest *request) const
+    {
+        if (!request->has_axi_dma_config())
+        {
+            return std::nullopt;
+        }
+
+        const dma::AxiDmaConfig &config = request->axi_dma_config();
+        DmaHardwareConfig native_config;
+        native_config.has_sts_cntrl_strm = config.has_sts_cntrl_strm();
+        native_config.has_mm2s = config.has_mm2s();
+        native_config.has_mm2s_dre = config.has_mm2s_dre();
+        native_config.mm2s_data_width = config.mm2s_data_width();
+        native_config.has_s2mm = config.has_s2mm();
+        native_config.has_s2mm_dre = config.has_s2mm_dre();
+        native_config.s2mm_data_width = config.s2mm_data_width();
+        native_config.has_sg = config.has_sg();
+        native_config.mm2s_num_channels = config.mm2s_num_channels();
+        native_config.s2mm_num_channels = config.s2mm_num_channels();
+        native_config.mm2s_burst_size = config.mm2s_burst_size();
+        native_config.s2mm_burst_size = config.s2mm_burst_size();
+        native_config.micro_dma_mode = config.micro_dma_mode();
+        native_config.addr_width = config.addr_width();
+        native_config.sg_length_width = config.sg_length_width();
+        return native_config;
+    }
+
     DMAChannel *select_channel(DMA &dma_instance, DmaChannelDirection direction)
     {
         if (direction == DmaChannelDirection::S2MM)
@@ -780,7 +814,8 @@ public:
     {
         #ifdef DEBUG
         std::cout << "RPC DMA BIND REQUEST: "
-                  << "mmio_id=" << request->mmio_id()
+                  << "mmio_id=" << request->mmio_id() << ", "
+                  << "has_axi_dma_config=" << (request->has_axi_dma_config() ? "true" : "false")
                   << std::endl;
         #endif
         MMIO *mmio = mmio_service_.findMMIO(request->mmio_id());
@@ -789,8 +824,12 @@ public:
             return grpc::Status(grpc::StatusCode::NOT_FOUND, "MMIO Object not found.");
         }
 
-        get_or_create_dma(request->mmio_id(), *mmio);
-        response->set_status(true);
+        DMA &dma_instance = get_or_create_dma(request->mmio_id(), *mmio, to_native_config(request));
+        response->set_status(dma_instance.backend_ready());
+        if (!dma_instance.backend_ready())
+        {
+            response->set_msg(dma_instance.backend_error());
+        }
         return grpc::Status::OK;
     }
 

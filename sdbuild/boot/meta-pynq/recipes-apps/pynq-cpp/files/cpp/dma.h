@@ -24,6 +24,10 @@
 #include "buffer.h"
 #include "mmio.h"
 
+#ifdef USE_XAXIDMA
+#include "xaxidma.h"
+#endif
+
 enum class DmaChannelDirection
 {
     MM2S = 1,
@@ -51,6 +55,25 @@ struct DmaTransferRequest
     uint64_t nbytes = 0;
     DmaTransferMode transfer_mode = DmaTransferMode::Simple;
     bool cyclic = false;
+};
+
+struct DmaHardwareConfig
+{
+    bool has_sts_cntrl_strm = false;
+    bool has_mm2s = true;
+    bool has_mm2s_dre = false;
+    uint32_t mm2s_data_width = 32;
+    bool has_s2mm = true;
+    bool has_s2mm_dre = false;
+    uint32_t s2mm_data_width = 32;
+    bool has_sg = false;
+    uint32_t mm2s_num_channels = 1;
+    uint32_t s2mm_num_channels = 1;
+    uint32_t mm2s_burst_size = 16;
+    uint32_t s2mm_burst_size = 16;
+    bool micro_dma_mode = false;
+    uint32_t addr_width = 32;
+    uint32_t sg_length_width = 23;
 };
 
 struct DmaWaitRequest
@@ -91,13 +114,17 @@ class DMAChannel;
 class DmaManager
 {
 public:
-    DmaManager(uint64_t base_address, size_t length = 0x1000);
-    explicit DmaManager(MMIO &mmio);
+    DmaManager(uint64_t base_address, size_t length = 0x1000, std::optional<DmaHardwareConfig> config = std::nullopt);
+    explicit DmaManager(MMIO &mmio, std::optional<DmaHardwareConfig> config = std::nullopt);
+    ~DmaManager() = default;
 
     DmaTransferResult transfer(const DmaTransferRequest &request);
     DmaWaitResult wait(const DmaWaitRequest &request);
     DmaWaitResult stop(const std::string &transfer_id);
     DmaStatusResult status(const std::string &transfer_id);
+    bool backend_ready() const;
+    const std::string &backend_error() const;
+    bool using_xaxidma() const;
 
 private:
     struct ActiveTransfer
@@ -125,6 +152,14 @@ private:
     MMIO *mmio_;
     std::unordered_map<std::string, ActiveTransfer> transfers_;
     uint64_t transfer_counter_ = 0;
+    std::optional<DmaHardwareConfig> hardware_config_;
+    bool use_xaxidma_ = false;
+    std::string backend_error_;
+
+#ifdef USE_XAXIDMA
+    std::optional<XAxiDma> axidma_instance_;
+    std::optional<XAxiDma_Config> axidma_config_;
+#endif
 
     MMIO &mmio() const;
     std::string generate_transfer_id();
@@ -134,6 +169,14 @@ private:
     bool is_idle(uint32_t status) const;
     bool is_halted(uint32_t status) const;
     std::optional<std::string> decode_error(uint32_t status) const;
+    void initialize_backend();
+    bool ensure_backend_ready(std::string &message) const;
+
+#ifdef USE_XAXIDMA
+    std::optional<std::string> initialize_xaxidma(const DmaHardwareConfig &config);
+    std::string xaxidma_status_to_string(int status) const;
+    int xaxidma_direction(DmaChannelDirection direction) const;
+#endif
 };
 
 class DMAChannel
@@ -166,8 +209,8 @@ private:
 class DMA
 {
 public:
-    DMA(uint64_t base_address, size_t length = 0x1000);
-    explicit DMA(MMIO &mmio);
+    DMA(uint64_t base_address, size_t length = 0x1000, std::optional<DmaHardwareConfig> config = std::nullopt);
+    explicit DMA(MMIO &mmio, std::optional<DmaHardwareConfig> config = std::nullopt);
 
 private:
     DmaManager manager_;
@@ -175,6 +218,9 @@ private:
 public:
     DMAChannel sendchannel;
     DMAChannel recvchannel;
+    bool backend_ready() const { return manager_.backend_ready(); }
+    const std::string &backend_error() const { return manager_.backend_error(); }
+    bool using_xaxidma() const { return manager_.using_xaxidma(); }
 };
 
 #endif // DMA_H

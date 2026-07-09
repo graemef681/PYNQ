@@ -6,27 +6,37 @@
  * Created: 2026-06-16
  *
  * This file implements a service-independent DMA manager that mirrors the
- * high-level operations used by the Python PYNQ DMA driver. It is intended
- * to be called from a future gRPC service implementation.
+ * high-level operations used by the Python PYNQ DMA driver. It can drive the
+ * AXI DMA either via direct MMIO register access or via the embeddedsw
+ * XAxiDma driver when the build and bind request supply enough metadata.
  */
 
 #include "dma.h"
 
 #include <chrono>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
 
-DmaManager::DmaManager(uint64_t base_address, size_t length)
+#ifdef USE_XAXIDMA
+#include "xstatus.h"
+#endif
+
+DmaManager::DmaManager(uint64_t base_address, size_t length, std::optional<DmaHardwareConfig> config)
     : owned_mmio_(std::make_unique<MMIO>(base_address, length)),
-      mmio_(owned_mmio_.get())
+      mmio_(owned_mmio_.get()),
+      hardware_config_(std::move(config))
 {
+    initialize_backend();
 }
 
-DmaManager::DmaManager(MMIO &mmio)
+DmaManager::DmaManager(MMIO &mmio, std::optional<DmaHardwareConfig> config)
     : owned_mmio_(nullptr),
-      mmio_(&mmio)
+      mmio_(&mmio),
+      hardware_config_(std::move(config))
 {
+    initialize_backend();
 }
 
 DmaTransferResult DmaManager::transfer(const DmaTransferRequest &request)
@@ -35,6 +45,13 @@ DmaTransferResult DmaManager::transfer(const DmaTransferRequest &request)
 
     try
     {
+        std::string backend_message;
+        if (!ensure_backend_ready(backend_message))
+        {
+            result.message = backend_message;
+            return result;
+        }
+
         if (request.buffer == nullptr)
         {
             result.message = "Buffer pointer cannot be null.";
@@ -53,29 +70,63 @@ DmaTransferResult DmaManager::transfer(const DmaTransferRequest &request)
             return result;
         }
 
+        if (request.start > request.buffer->size_)
+        {
+            result.message = "Start offset exceeds buffer size.";
+            return result;
+        }
+
+        uint64_t nbytes = request.nbytes;
+        if (nbytes == 0)
+        {
+            nbytes = request.buffer->size_ - request.start;
+        }
+        else
+        {
+            uint64_t remaining = request.buffer->size_ - request.start;
+            if (nbytes > remaining)
+            {
+                result.message = "Requested transfer exceeds buffer size.";
+                return result;
+            }
+        }
+
+        if (nbytes > std::numeric_limits<uint32_t>::max())
+        {
+            result.message = "Transfer size exceeds XAxiDma/simple DMA 32-bit length support.";
+            return result;
+        }
+
         uint64_t offset = channel_offset(request.direction);
+        uint64_t address = request.buffer->physical_address() + request.start;
 
         if (request.direction == DmaChannelDirection::MM2S)
         {
             request.buffer->flush();
         }
 
-        uint64_t address = request.buffer->physical_address() + request.start;
-        uint64_t nbytes = request.nbytes;
-        if (nbytes == 0)
+#ifdef USE_XAXIDMA
+        if (use_xaxidma_)
         {
-            if (request.start > request.buffer->size_)
+            int status = XAxiDma_SimpleTransfer(
+                &axidma_instance_.value(),
+                static_cast<UINTPTR>(address),
+                static_cast<u32>(nbytes),
+                xaxidma_direction(request.direction));
+            if (status != XST_SUCCESS)
             {
-                result.message = "Start offset exceeds buffer size.";
+                result.message = "XAxiDma_SimpleTransfer failed: " + xaxidma_status_to_string(status);
                 return result;
             }
-            nbytes = request.buffer->size_ - request.start;
         }
-
-        mmio().write(kRunStop, offset + kDmacrOffset);
-        mmio().write(static_cast<uint32_t>(address & 0xFFFFFFFFu), offset + kAddrLowOffset);
-        mmio().write(static_cast<uint32_t>((address >> 32) & 0xFFFFFFFFu), offset + kAddrHighOffset);
-        mmio().write(static_cast<uint32_t>(nbytes), offset + kLengthOffset);
+        else
+#endif
+        {
+            mmio().write(kRunStop, offset + kDmacrOffset);
+            mmio().write(static_cast<uint32_t>(address & 0xFFFFFFFFu), offset + kAddrLowOffset);
+            mmio().write(static_cast<uint32_t>((address >> 32) & 0xFFFFFFFFu), offset + kAddrHighOffset);
+            mmio().write(static_cast<uint32_t>(nbytes), offset + kLengthOffset);
+        }
 
         ActiveTransfer transfer;
         transfer.direction = request.direction;
@@ -102,6 +153,13 @@ DmaWaitResult DmaManager::wait(const DmaWaitRequest &request)
 
     try
     {
+        std::string backend_message;
+        if (!ensure_backend_ready(backend_message))
+        {
+            result.message = backend_message;
+            return result;
+        }
+
         auto it = transfers_.find(request.transfer_id);
         if (it == transfers_.end())
         {
@@ -132,9 +190,21 @@ DmaWaitResult DmaManager::wait(const DmaWaitRequest &request)
                 return result;
             }
 
-            if (is_idle(status_value))
+#ifdef USE_XAXIDMA
+            if (use_xaxidma_)
             {
-                break;
+                if (!XAxiDma_Busy(&axidma_instance_.value(), xaxidma_direction(transfer.direction)))
+                {
+                    break;
+                }
+            }
+            else
+#endif
+            {
+                if (is_idle(status_value))
+                {
+                    break;
+                }
             }
 
             if (request.timeout_ms > 0)
@@ -177,6 +247,13 @@ DmaWaitResult DmaManager::stop(const std::string &transfer_id)
 
     try
     {
+        std::string backend_message;
+        if (!ensure_backend_ready(backend_message))
+        {
+            result.message = backend_message;
+            return result;
+        }
+
         auto it = transfers_.find(transfer_id);
         if (it == transfers_.end())
         {
@@ -209,6 +286,13 @@ DmaStatusResult DmaManager::status(const std::string &transfer_id)
 
     try
     {
+        std::string backend_message;
+        if (!ensure_backend_ready(backend_message))
+        {
+            result.message = backend_message;
+            return result;
+        }
+
         auto it = transfers_.find(transfer_id);
         if (it == transfers_.end())
         {
@@ -236,6 +320,21 @@ DmaStatusResult DmaManager::status(const std::string &transfer_id)
     }
 
     return result;
+}
+
+bool DmaManager::backend_ready() const
+{
+    return backend_error_.empty();
+}
+
+const std::string &DmaManager::backend_error() const
+{
+    return backend_error_;
+}
+
+bool DmaManager::using_xaxidma() const
+{
+    return use_xaxidma_;
 }
 
 MMIO &DmaManager::mmio() const
@@ -294,18 +393,140 @@ std::optional<std::string> DmaManager::decode_error(uint32_t status) const
     {
         return std::string("DMA Decode Error (invalid address)");
     }
+    if (status & 0x100u)
+    {
+        return std::string("DMA Scatter-Gather Internal Error");
+    }
+    if (status & 0x200u)
+    {
+        return std::string("DMA Scatter-Gather Slave Error");
+    }
+    if (status & 0x400u)
+    {
+        return std::string("DMA Scatter-Gather Decode Error");
+    }
     return std::nullopt;
 }
 
-DMA::DMA(uint64_t base_address, size_t length)
-    : manager_(base_address, length),
+void DmaManager::initialize_backend()
+{
+    backend_error_.clear();
+    use_xaxidma_ = false;
+
+    if (!hardware_config_.has_value())
+    {
+        return;
+    }
+
+#ifdef USE_XAXIDMA
+    use_xaxidma_ = true;
+    if (auto error = initialize_xaxidma(hardware_config_.value()); error.has_value())
+    {
+        backend_error_ = error.value();
+        use_xaxidma_ = false;
+    }
+#else
+    backend_error_ = "XAxiDma backend requested but this build was compiled without USE_XAXIDMA.";
+#endif
+}
+
+bool DmaManager::ensure_backend_ready(std::string &message) const
+{
+    if (!backend_error_.empty())
+    {
+        message = backend_error_;
+        return false;
+    }
+    return true;
+}
+
+#ifdef USE_XAXIDMA
+std::optional<std::string> DmaManager::initialize_xaxidma(const DmaHardwareConfig &config)
+{
+    uintptr_t virtual_base = mmio().virtual_address();
+    if (virtual_base == 0)
+    {
+        return std::string("MMIO region is not mapped; cannot initialize XAxiDma.");
+    }
+
+    XAxiDma_Config native_config{};
+#ifndef SDT
+    native_config.DeviceId = 0;
+#else
+    native_config.Name = nullptr;
+#endif
+    native_config.BaseAddr = static_cast<UINTPTR>(virtual_base);
+    native_config.HasStsCntrlStrm = config.has_sts_cntrl_strm ? 1 : 0;
+    native_config.HasMm2S = config.has_mm2s ? 1 : 0;
+    native_config.HasMm2SDRE = config.has_mm2s_dre ? 1 : 0;
+    native_config.Mm2SDataWidth = static_cast<int>(config.mm2s_data_width);
+    native_config.HasS2Mm = config.has_s2mm ? 1 : 0;
+    native_config.HasS2MmDRE = config.has_s2mm_dre ? 1 : 0;
+    native_config.S2MmDataWidth = static_cast<int>(config.s2mm_data_width);
+    native_config.HasSg = config.has_sg ? 1 : 0;
+    native_config.Mm2sNumChannels = static_cast<int>(config.mm2s_num_channels);
+    native_config.S2MmNumChannels = static_cast<int>(config.s2mm_num_channels);
+    native_config.Mm2SBurstSize = static_cast<int>(config.mm2s_burst_size);
+    native_config.S2MmBurstSize = static_cast<int>(config.s2mm_burst_size);
+    native_config.MicroDmaMode = config.micro_dma_mode ? 1 : 0;
+    native_config.AddrWidth = static_cast<int>(config.addr_width);
+    native_config.SgLengthWidth = static_cast<int>(config.sg_length_width);
+
+    XAxiDma instance{};
+    int status = XAxiDma_CfgInitialize(&instance, &native_config);
+    if (status != XST_SUCCESS)
+    {
+        return std::string("XAxiDma_CfgInitialize failed: ") + xaxidma_status_to_string(status);
+    }
+
+    if (native_config.HasMm2S)
+    {
+        XAxiDma_IntrDisable(&instance, XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DMA_TO_DEVICE);
+    }
+    if (native_config.HasS2Mm)
+    {
+        XAxiDma_IntrDisable(&instance, XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DEVICE_TO_DMA);
+    }
+
+    axidma_config_ = native_config;
+    axidma_instance_ = instance;
+    return std::nullopt;
+}
+
+std::string DmaManager::xaxidma_status_to_string(int status) const
+{
+    switch (status)
+    {
+    case XST_SUCCESS:
+        return "XST_SUCCESS";
+    case XST_FAILURE:
+        return "XST_FAILURE";
+    case XST_INVALID_PARAM:
+        return "XST_INVALID_PARAM";
+    case XST_DMA_ERROR:
+        return "XST_DMA_ERROR";
+    case XST_NOT_SGDMA:
+        return "XST_NOT_SGDMA";
+    default:
+        return "status code " + std::to_string(status);
+    }
+}
+
+int DmaManager::xaxidma_direction(DmaChannelDirection direction) const
+{
+    return (direction == DmaChannelDirection::S2MM) ? XAXIDMA_DEVICE_TO_DMA : XAXIDMA_DMA_TO_DEVICE;
+}
+#endif
+
+DMA::DMA(uint64_t base_address, size_t length, std::optional<DmaHardwareConfig> config)
+    : manager_(base_address, length, std::move(config)),
       sendchannel(manager_, DmaChannelDirection::MM2S),
       recvchannel(manager_, DmaChannelDirection::S2MM)
 {
 }
 
-DMA::DMA(MMIO &mmio)
-    : manager_(mmio),
+DMA::DMA(MMIO &mmio, std::optional<DmaHardwareConfig> config)
+    : manager_(mmio, std::move(config)),
       sendchannel(manager_, DmaChannelDirection::MM2S),
       recvchannel(manager_, DmaChannelDirection::S2MM)
 {

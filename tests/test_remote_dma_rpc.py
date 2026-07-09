@@ -7,6 +7,14 @@ import numpy as np
 os.environ["PYNQ_REMOTE_DEVICES"] = "192.168.2.197"
 
 
+def _bool_param(params, key, default="0"):
+    return bool(int(params.get(key, default)))
+
+
+def _int_param(params, key, default="0"):
+    return int(params.get(key, default))
+
+
 @pytest.mark.remote
 def test_remote_dma_rpc():
     """Exercise the DMA gRPC service using the resizer overlay."""
@@ -37,10 +45,30 @@ def test_remote_dma_rpc():
     resizer = design.resize_accel_0
     device = dma.device
     remote_mmio = device.mmap(dma.mmio.base_addr, dma.mmio.length)
+    params = dma.description["parameters"]
 
     dma_stub = dma_pb2_grpc.DmaStub(device.client.channel)
     bind_response = dma_stub.bind_dma(
-        dma_pb2.BindDmaRequest(mmio_id=remote_mmio.mmio_id)
+        dma_pb2.BindDmaRequest(
+            mmio_id=remote_mmio.mmio_id,
+            axi_dma_config=dma_pb2.AxiDmaConfig(
+                has_sts_cntrl_strm=_bool_param(params, "c_sg_include_stscntrl_strm"),
+                has_mm2s=_bool_param(params, "c_include_mm2s", "1"),
+                has_mm2s_dre=_bool_param(params, "c_include_mm2s_dre"),
+                mm2s_data_width=_int_param(params, "c_m_axi_mm2s_data_width", "32"),
+                has_s2mm=_bool_param(params, "c_include_s2mm", "1"),
+                has_s2mm_dre=_bool_param(params, "c_include_s2mm_dre"),
+                s2mm_data_width=_int_param(params, "c_m_axi_s2mm_data_width", "32"),
+                has_sg=_bool_param(params, "c_include_sg"),
+                mm2s_num_channels=_int_param(params, "c_num_mm2s_channels", "1"),
+                s2mm_num_channels=_int_param(params, "c_num_s2mm_channels", "1"),
+                mm2s_burst_size=_int_param(params, "c_mm2s_burst_size", "16"),
+                s2mm_burst_size=_int_param(params, "c_s2mm_burst_size", "16"),
+                micro_dma_mode=_bool_param(params, "c_micro_dma"),
+                addr_width=_int_param(params, "c_addr_width", "32"),
+                sg_length_width=_int_param(params, "c_sg_length_width", "23"),
+            ),
+        )
     )
     if getattr(bind_response, "msg", ""):
         raise RuntimeError(bind_response.msg)

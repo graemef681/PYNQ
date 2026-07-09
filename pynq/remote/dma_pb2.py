@@ -14,39 +14,41 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\tdma.proto\x12\x03\x64ma\"!\n\x0e\x42indDmaRequest\x12\x0f\n\x07mmio_id\x18\x01 \x01(\t\";\n\x0f\x42indDmaResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\x06\n\x04_msg\"\xb8\x01\n\x0fTransferRequest\x12\x0f\n\x07mmio_id\x18\x01 \x01(\t\x12(\n\tdirection\x18\x02 \x01(\x0e\x32\x15.dma.ChannelDirection\x12\x11\n\tbuffer_id\x18\x03 \x01(\t\x12\r\n\x05start\x18\x04 \x01(\x04\x12\x0e\n\x06nbytes\x18\x05 \x01(\x04\x12(\n\rtransfer_mode\x18\x07 \x01(\x0e\x32\x11.dma.TransferMode\x12\x0e\n\x06\x63yclic\x18\x08 \x01(\x08\"f\n\x10TransferResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0btransfer_id\x18\x03 \x01(\tH\x01\x88\x01\x01\x42\x06\n\x04_msgB\x0e\n\x0c_transfer_id\"d\n\x0bWaitRequest\x12\x13\n\x0btransfer_id\x18\x01 \x01(\t\x12,\n\x0f\x63ompletion_mode\x18\x02 \x01(\x0e\x32\x13.dma.CompletionMode\x12\x12\n\ntimeout_ms\x18\x03 \x01(\x04\"\x8a\x01\n\x0cWaitResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0btransferred\x18\x03 \x01(\x04H\x01\x88\x01\x01\x12\x17\n\ndma_status\x18\x04 \x01(\rH\x02\x88\x01\x01\x42\x06\n\x04_msgB\x0e\n\x0c_transferredB\r\n\x0b_dma_status\"\"\n\x0bStopRequest\x12\x13\n\x0btransfer_id\x18\x01 \x01(\t\"`\n\x0cStopResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x17\n\ndma_status\x18\x03 \x01(\rH\x01\x88\x01\x01\x42\x06\n\x04_msgB\r\n\x0b_dma_status\"$\n\rStatusRequest\x12\x13\n\x0btransfer_id\x18\x01 \x01(\t\"\xea\x01\n\x0eStatusResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x14\n\x07running\x18\x03 \x01(\x08H\x01\x88\x01\x01\x12\x11\n\x04idle\x18\x04 \x01(\x08H\x02\x88\x01\x01\x12\x13\n\x06halted\x18\x05 \x01(\x08H\x03\x88\x01\x01\x12\x17\n\ndma_status\x18\x06 \x01(\rH\x04\x88\x01\x01\x12\x18\n\x0btransferred\x18\x07 \x01(\x04H\x05\x88\x01\x01\x42\x06\n\x04_msgB\n\n\x08_runningB\x07\n\x05_idleB\t\n\x07_haltedB\r\n\x0b_dma_statusB\x0e\n\x0c_transferred*m\n\x10\x43hannelDirection\x12!\n\x1d\x43HANNEL_DIRECTION_UNSPECIFIED\x10\x00\x12\x1a\n\x16\x43HANNEL_DIRECTION_MM2S\x10\x01\x12\x1a\n\x16\x43HANNEL_DIRECTION_S2MM\x10\x02*c\n\x0e\x43ompletionMode\x12\x18\n\x14\x43OMPLETION_MODE_AUTO\x10\x00\x12\x18\n\x14\x43OMPLETION_MODE_POLL\x10\x01\x12\x1d\n\x19\x43OMPLETION_MODE_INTERRUPT\x10\x02*J\n\x0cTransferMode\x12\x18\n\x14TRANSFER_MODE_SIMPLE\x10\x00\x12 \n\x1cTRANSFER_MODE_SCATTER_GATHER\x10\x01\x32\x8c\x02\n\x03\x44ma\x12\x37\n\x08\x62ind_dma\x12\x13.dma.BindDmaRequest\x1a\x14.dma.BindDmaResponse\"\x00\x12\x39\n\x08transfer\x12\x14.dma.TransferRequest\x1a\x15.dma.TransferResponse\"\x00\x12-\n\x04wait\x12\x10.dma.WaitRequest\x1a\x11.dma.WaitResponse\"\x00\x12-\n\x04stop\x12\x10.dma.StopRequest\x1a\x11.dma.StopResponse\"\x00\x12\x33\n\x06status\x12\x12.dma.StatusRequest\x1a\x13.dma.StatusResponse\"\x00\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\tdma.proto\x12\x03\x64ma\"\xe9\x02\n\x0c\x41xiDmaConfig\x12\x1a\n\x12has_sts_cntrl_strm\x18\x01 \x01(\x08\x12\x10\n\x08has_mm2s\x18\x02 \x01(\x08\x12\x14\n\x0chas_mm2s_dre\x18\x03 \x01(\x08\x12\x17\n\x0fmm2s_data_width\x18\x04 \x01(\r\x12\x10\n\x08has_s2mm\x18\x05 \x01(\x08\x12\x14\n\x0chas_s2mm_dre\x18\x06 \x01(\x08\x12\x17\n\x0fs2mm_data_width\x18\x07 \x01(\r\x12\x0e\n\x06has_sg\x18\x08 \x01(\x08\x12\x19\n\x11mm2s_num_channels\x18\t \x01(\r\x12\x19\n\x11s2mm_num_channels\x18\n \x01(\r\x12\x17\n\x0fmm2s_burst_size\x18\x0b \x01(\r\x12\x17\n\x0fs2mm_burst_size\x18\x0c \x01(\r\x12\x16\n\x0emicro_dma_mode\x18\r \x01(\x08\x12\x12\n\naddr_width\x18\x0e \x01(\r\x12\x17\n\x0fsg_length_width\x18\x0f \x01(\r\"L\n\x0e\x42indDmaRequest\x12\x0f\n\x07mmio_id\x18\x01 \x01(\t\x12)\n\x0e\x61xi_dma_config\x18\x02 \x01(\x0b\x32\x11.dma.AxiDmaConfig\";\n\x0f\x42indDmaResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\x06\n\x04_msg\"\xb8\x01\n\x0fTransferRequest\x12\x0f\n\x07mmio_id\x18\x01 \x01(\t\x12(\n\tdirection\x18\x02 \x01(\x0e\x32\x15.dma.ChannelDirection\x12\x11\n\tbuffer_id\x18\x03 \x01(\t\x12\r\n\x05start\x18\x04 \x01(\x04\x12\x0e\n\x06nbytes\x18\x05 \x01(\x04\x12(\n\rtransfer_mode\x18\x07 \x01(\x0e\x32\x11.dma.TransferMode\x12\x0e\n\x06\x63yclic\x18\x08 \x01(\x08\"f\n\x10TransferResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0btransfer_id\x18\x03 \x01(\tH\x01\x88\x01\x01\x42\x06\n\x04_msgB\x0e\n\x0c_transfer_id\"d\n\x0bWaitRequest\x12\x13\n\x0btransfer_id\x18\x01 \x01(\t\x12,\n\x0f\x63ompletion_mode\x18\x02 \x01(\x0e\x32\x13.dma.CompletionMode\x12\x12\n\ntimeout_ms\x18\x03 \x01(\x04\"\x8a\x01\n\x0cWaitResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0btransferred\x18\x03 \x01(\x04H\x01\x88\x01\x01\x12\x17\n\ndma_status\x18\x04 \x01(\rH\x02\x88\x01\x01\x42\x06\n\x04_msgB\x0e\n\x0c_transferredB\r\n\x0b_dma_status\"\"\n\x0bStopRequest\x12\x13\n\x0btransfer_id\x18\x01 \x01(\t\"`\n\x0cStopResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x17\n\ndma_status\x18\x03 \x01(\rH\x01\x88\x01\x01\x42\x06\n\x04_msgB\r\n\x0b_dma_status\"$\n\rStatusRequest\x12\x13\n\x0btransfer_id\x18\x01 \x01(\t\"\xea\x01\n\x0eStatusResponse\x12\x0e\n\x06status\x18\x01 \x01(\x08\x12\x10\n\x03msg\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x14\n\x07running\x18\x03 \x01(\x08H\x01\x88\x01\x01\x12\x11\n\x04idle\x18\x04 \x01(\x08H\x02\x88\x01\x01\x12\x13\n\x06halted\x18\x05 \x01(\x08H\x03\x88\x01\x01\x12\x17\n\ndma_status\x18\x06 \x01(\rH\x04\x88\x01\x01\x12\x18\n\x0btransferred\x18\x07 \x01(\x04H\x05\x88\x01\x01\x42\x06\n\x04_msgB\n\n\x08_runningB\x07\n\x05_idleB\t\n\x07_haltedB\r\n\x0b_dma_statusB\x0e\n\x0c_transferred*m\n\x10\x43hannelDirection\x12!\n\x1d\x43HANNEL_DIRECTION_UNSPECIFIED\x10\x00\x12\x1a\n\x16\x43HANNEL_DIRECTION_MM2S\x10\x01\x12\x1a\n\x16\x43HANNEL_DIRECTION_S2MM\x10\x02*c\n\x0e\x43ompletionMode\x12\x18\n\x14\x43OMPLETION_MODE_AUTO\x10\x00\x12\x18\n\x14\x43OMPLETION_MODE_POLL\x10\x01\x12\x1d\n\x19\x43OMPLETION_MODE_INTERRUPT\x10\x02*J\n\x0cTransferMode\x12\x18\n\x14TRANSFER_MODE_SIMPLE\x10\x00\x12 \n\x1cTRANSFER_MODE_SCATTER_GATHER\x10\x01\x32\x8c\x02\n\x03\x44ma\x12\x37\n\x08\x62ind_dma\x12\x13.dma.BindDmaRequest\x1a\x14.dma.BindDmaResponse\"\x00\x12\x39\n\x08transfer\x12\x14.dma.TransferRequest\x1a\x15.dma.TransferResponse\"\x00\x12-\n\x04wait\x12\x10.dma.WaitRequest\x1a\x11.dma.WaitResponse\"\x00\x12-\n\x04stop\x12\x10.dma.StopRequest\x1a\x11.dma.StopResponse\"\x00\x12\x33\n\x06status\x12\x12.dma.StatusRequest\x1a\x13.dma.StatusResponse\"\x00\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'dma_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_CHANNELDIRECTION']._serialized_start=1057
-  _globals['_CHANNELDIRECTION']._serialized_end=1166
-  _globals['_COMPLETIONMODE']._serialized_start=1168
-  _globals['_COMPLETIONMODE']._serialized_end=1267
-  _globals['_TRANSFERMODE']._serialized_start=1269
-  _globals['_TRANSFERMODE']._serialized_end=1343
-  _globals['_BINDDMAREQUEST']._serialized_start=18
-  _globals['_BINDDMAREQUEST']._serialized_end=51
-  _globals['_BINDDMARESPONSE']._serialized_start=53
-  _globals['_BINDDMARESPONSE']._serialized_end=112
-  _globals['_TRANSFERREQUEST']._serialized_start=115
-  _globals['_TRANSFERREQUEST']._serialized_end=299
-  _globals['_TRANSFERRESPONSE']._serialized_start=301
-  _globals['_TRANSFERRESPONSE']._serialized_end=403
-  _globals['_WAITREQUEST']._serialized_start=405
-  _globals['_WAITREQUEST']._serialized_end=505
-  _globals['_WAITRESPONSE']._serialized_start=508
-  _globals['_WAITRESPONSE']._serialized_end=646
-  _globals['_STOPREQUEST']._serialized_start=648
-  _globals['_STOPREQUEST']._serialized_end=682
-  _globals['_STOPRESPONSE']._serialized_start=684
-  _globals['_STOPRESPONSE']._serialized_end=780
-  _globals['_STATUSREQUEST']._serialized_start=782
-  _globals['_STATUSREQUEST']._serialized_end=818
-  _globals['_STATUSRESPONSE']._serialized_start=821
-  _globals['_STATUSRESPONSE']._serialized_end=1055
-  _globals['_DMA']._serialized_start=1346
-  _globals['_DMA']._serialized_end=1614
+  _globals['_CHANNELDIRECTION']._serialized_start=1464
+  _globals['_CHANNELDIRECTION']._serialized_end=1573
+  _globals['_COMPLETIONMODE']._serialized_start=1575
+  _globals['_COMPLETIONMODE']._serialized_end=1674
+  _globals['_TRANSFERMODE']._serialized_start=1676
+  _globals['_TRANSFERMODE']._serialized_end=1750
+  _globals['_AXIDMACONFIG']._serialized_start=19
+  _globals['_AXIDMACONFIG']._serialized_end=380
+  _globals['_BINDDMAREQUEST']._serialized_start=382
+  _globals['_BINDDMAREQUEST']._serialized_end=458
+  _globals['_BINDDMARESPONSE']._serialized_start=460
+  _globals['_BINDDMARESPONSE']._serialized_end=519
+  _globals['_TRANSFERREQUEST']._serialized_start=522
+  _globals['_TRANSFERREQUEST']._serialized_end=706
+  _globals['_TRANSFERRESPONSE']._serialized_start=708
+  _globals['_TRANSFERRESPONSE']._serialized_end=810
+  _globals['_WAITREQUEST']._serialized_start=812
+  _globals['_WAITREQUEST']._serialized_end=912
+  _globals['_WAITRESPONSE']._serialized_start=915
+  _globals['_WAITRESPONSE']._serialized_end=1053
+  _globals['_STOPREQUEST']._serialized_start=1055
+  _globals['_STOPREQUEST']._serialized_end=1089
+  _globals['_STOPRESPONSE']._serialized_start=1091
+  _globals['_STOPRESPONSE']._serialized_end=1187
+  _globals['_STATUSREQUEST']._serialized_start=1189
+  _globals['_STATUSREQUEST']._serialized_end=1225
+  _globals['_STATUSRESPONSE']._serialized_start=1228
+  _globals['_STATUSRESPONSE']._serialized_end=1462
+  _globals['_DMA']._serialized_start=1753
+  _globals['_DMA']._serialized_end=2021
 # @@protoc_insertion_point(module_scope)

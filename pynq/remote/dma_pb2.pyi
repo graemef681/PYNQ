@@ -1,7 +1,7 @@
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -30,11 +30,47 @@ COMPLETION_MODE_INTERRUPT: CompletionMode
 TRANSFER_MODE_SIMPLE: TransferMode
 TRANSFER_MODE_SCATTER_GATHER: TransferMode
 
+class AxiDmaConfig(_message.Message):
+    __slots__ = ("has_sts_cntrl_strm", "has_mm2s", "has_mm2s_dre", "mm2s_data_width", "has_s2mm", "has_s2mm_dre", "s2mm_data_width", "has_sg", "mm2s_num_channels", "s2mm_num_channels", "mm2s_burst_size", "s2mm_burst_size", "micro_dma_mode", "addr_width", "sg_length_width")
+    HAS_STS_CNTRL_STRM_FIELD_NUMBER: _ClassVar[int]
+    HAS_MM2S_FIELD_NUMBER: _ClassVar[int]
+    HAS_MM2S_DRE_FIELD_NUMBER: _ClassVar[int]
+    MM2S_DATA_WIDTH_FIELD_NUMBER: _ClassVar[int]
+    HAS_S2MM_FIELD_NUMBER: _ClassVar[int]
+    HAS_S2MM_DRE_FIELD_NUMBER: _ClassVar[int]
+    S2MM_DATA_WIDTH_FIELD_NUMBER: _ClassVar[int]
+    HAS_SG_FIELD_NUMBER: _ClassVar[int]
+    MM2S_NUM_CHANNELS_FIELD_NUMBER: _ClassVar[int]
+    S2MM_NUM_CHANNELS_FIELD_NUMBER: _ClassVar[int]
+    MM2S_BURST_SIZE_FIELD_NUMBER: _ClassVar[int]
+    S2MM_BURST_SIZE_FIELD_NUMBER: _ClassVar[int]
+    MICRO_DMA_MODE_FIELD_NUMBER: _ClassVar[int]
+    ADDR_WIDTH_FIELD_NUMBER: _ClassVar[int]
+    SG_LENGTH_WIDTH_FIELD_NUMBER: _ClassVar[int]
+    has_sts_cntrl_strm: bool
+    has_mm2s: bool
+    has_mm2s_dre: bool
+    mm2s_data_width: int
+    has_s2mm: bool
+    has_s2mm_dre: bool
+    s2mm_data_width: int
+    has_sg: bool
+    mm2s_num_channels: int
+    s2mm_num_channels: int
+    mm2s_burst_size: int
+    s2mm_burst_size: int
+    micro_dma_mode: bool
+    addr_width: int
+    sg_length_width: int
+    def __init__(self, has_sts_cntrl_strm: bool = ..., has_mm2s: bool = ..., has_mm2s_dre: bool = ..., mm2s_data_width: _Optional[int] = ..., has_s2mm: bool = ..., has_s2mm_dre: bool = ..., s2mm_data_width: _Optional[int] = ..., has_sg: bool = ..., mm2s_num_channels: _Optional[int] = ..., s2mm_num_channels: _Optional[int] = ..., mm2s_burst_size: _Optional[int] = ..., s2mm_burst_size: _Optional[int] = ..., micro_dma_mode: bool = ..., addr_width: _Optional[int] = ..., sg_length_width: _Optional[int] = ...) -> None: ...
+
 class BindDmaRequest(_message.Message):
-    __slots__ = ("mmio_id",)
+    __slots__ = ("mmio_id", "axi_dma_config")
     MMIO_ID_FIELD_NUMBER: _ClassVar[int]
+    AXI_DMA_CONFIG_FIELD_NUMBER: _ClassVar[int]
     mmio_id: str
-    def __init__(self, mmio_id: _Optional[str] = ...) -> None: ...
+    axi_dma_config: AxiDmaConfig
+    def __init__(self, mmio_id: _Optional[str] = ..., axi_dma_config: _Optional[_Union[AxiDmaConfig, _Mapping]] = ...) -> None: ...
 
 class BindDmaResponse(_message.Message):
     __slots__ = ("status", "msg")
@@ -42,7 +78,7 @@ class BindDmaResponse(_message.Message):
     MSG_FIELD_NUMBER: _ClassVar[int]
     status: bool
     msg: str
-    def __init__(self, status: _Optional[bool] = ..., msg: _Optional[str] = ...) -> None: ...
+    def __init__(self, status: bool = ..., msg: _Optional[str] = ...) -> None: ...
 
 class TransferRequest(_message.Message):
     __slots__ = ("mmio_id", "direction", "buffer_id", "start", "nbytes", "transfer_mode", "cyclic")
@@ -60,7 +96,7 @@ class TransferRequest(_message.Message):
     nbytes: int
     transfer_mode: TransferMode
     cyclic: bool
-    def __init__(self, mmio_id: _Optional[str] = ..., direction: _Optional[_Union[ChannelDirection, str]] = ..., buffer_id: _Optional[str] = ..., start: _Optional[int] = ..., nbytes: _Optional[int] = ..., transfer_mode: _Optional[_Union[TransferMode, str]] = ..., cyclic: _Optional[bool] = ...) -> None: ...
+    def __init__(self, mmio_id: _Optional[str] = ..., direction: _Optional[_Union[ChannelDirection, str]] = ..., buffer_id: _Optional[str] = ..., start: _Optional[int] = ..., nbytes: _Optional[int] = ..., transfer_mode: _Optional[_Union[TransferMode, str]] = ..., cyclic: bool = ...) -> None: ...
 
 class TransferResponse(_message.Message):
     __slots__ = ("status", "msg", "transfer_id")
@@ -70,7 +106,7 @@ class TransferResponse(_message.Message):
     status: bool
     msg: str
     transfer_id: str
-    def __init__(self, status: _Optional[bool] = ..., msg: _Optional[str] = ..., transfer_id: _Optional[str] = ...) -> None: ...
+    def __init__(self, status: bool = ..., msg: _Optional[str] = ..., transfer_id: _Optional[str] = ...) -> None: ...
 
 class WaitRequest(_message.Message):
     __slots__ = ("transfer_id", "completion_mode", "timeout_ms")
@@ -92,7 +128,7 @@ class WaitResponse(_message.Message):
     msg: str
     transferred: int
     dma_status: int
-    def __init__(self, status: _Optional[bool] = ..., msg: _Optional[str] = ..., transferred: _Optional[int] = ..., dma_status: _Optional[int] = ...) -> None: ...
+    def __init__(self, status: bool = ..., msg: _Optional[str] = ..., transferred: _Optional[int] = ..., dma_status: _Optional[int] = ...) -> None: ...
 
 class StopRequest(_message.Message):
     __slots__ = ("transfer_id",)
@@ -108,7 +144,7 @@ class StopResponse(_message.Message):
     status: bool
     msg: str
     dma_status: int
-    def __init__(self, status: _Optional[bool] = ..., msg: _Optional[str] = ..., dma_status: _Optional[int] = ...) -> None: ...
+    def __init__(self, status: bool = ..., msg: _Optional[str] = ..., dma_status: _Optional[int] = ...) -> None: ...
 
 class StatusRequest(_message.Message):
     __slots__ = ("transfer_id",)
@@ -132,4 +168,4 @@ class StatusResponse(_message.Message):
     halted: bool
     dma_status: int
     transferred: int
-    def __init__(self, status: _Optional[bool] = ..., msg: _Optional[str] = ..., running: _Optional[bool] = ..., idle: _Optional[bool] = ..., halted: _Optional[bool] = ..., dma_status: _Optional[int] = ..., transferred: _Optional[int] = ...) -> None: ...
+    def __init__(self, status: bool = ..., msg: _Optional[str] = ..., running: bool = ..., idle: bool = ..., halted: bool = ..., dma_status: _Optional[int] = ..., transferred: _Optional[int] = ...) -> None: ...

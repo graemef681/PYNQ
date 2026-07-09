@@ -27,10 +27,32 @@ enum TransferMode {
     TRANSFER_MODE_SCATTER_GATHER = 1;
 }
 
+message AxiDmaConfig {
+    bool has_sts_cntrl_strm = 1;
+    bool has_mm2s = 2;
+    bool has_mm2s_dre = 3;
+    uint32 mm2s_data_width = 4;
+    bool has_s2mm = 5;
+    bool has_s2mm_dre = 6;
+    uint32 s2mm_data_width = 7;
+    bool has_sg = 8;
+    uint32 mm2s_num_channels = 9;
+    uint32 s2mm_num_channels = 10;
+    uint32 mm2s_burst_size = 11;
+    uint32 s2mm_burst_size = 12;
+    bool micro_dma_mode = 13;
+    uint32 addr_width = 14;
+    uint32 sg_length_width = 15;
+}
+
 message BindDmaRequest {
     // MMIO handle for the AXI DMA control interface. This remains the stable
     // identity for the DMA instance and can still be used for ordinary MMIO RPCs.
     string mmio_id = 1;
+    // Optional hardware description used to initialize the embeddedsw XAxiDma
+    // driver on the board side. If omitted, the server falls back to the
+    // direct-MMIO helper.
+    AxiDmaConfig axi_dma_config = 2;
 }
 
 message BindDmaResponse {

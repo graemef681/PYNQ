@@ -11,6 +11,11 @@ set (CMAKE_CXX_STANDARD 17) #For filesystem checks & unique_ptr
 option(RFSOC "Build RFSoC services (xrfdc, xrfclk)" OFF)
 message(STATUS "RFSOC = ${RFSOC}")
 
+# XAxiDma support is enabled by default for remote DMA. The Yocto recipe can
+# still disable it explicitly with -DUSE_XAXIDMA=OFF when needed.
+option(USE_XAXIDMA "Use embeddedsw XAxiDma backend for DMA services" ON)
+message(STATUS "USE_XAXIDMA = ${USE_XAXIDMA}")
+
 # Proto file
 get_filename_component(remote_device_proto "../protos/remote_device.proto" ABSOLUTE)
 get_filename_component(remote_device_proto_path "${remote_device_proto}" PATH)
@@ -142,6 +147,41 @@ if(RFSOC)
     message(STATUS "Found libmetal: ${METAL_LIBRARY}")
 endif()
 
+set(XAXIDMA_INCLUDE_DIRS "")
+set(XAXIDMA_SYSTEM_LINKS "")
+if(USE_XAXIDMA)
+    find_path(XAXIDMA_INCLUDE_DIR
+      NAMES xaxidma.h
+      PATHS "${CMAKE_SYSROOT}/usr/include" "${CMAKE_SYSROOT}/include"
+      NO_DEFAULT_PATH)
+    find_library(AXIDMA_LIBRARY
+      NAMES axidma
+      PATHS "${CMAKE_SYSROOT}/usr/lib" "${CMAKE_SYSROOT}/lib"
+      NO_DEFAULT_PATH)
+    find_library(XILSTANDALONE_LIBRARY
+      NAMES xilstandalone xil
+      PATHS "${CMAKE_SYSROOT}/usr/lib" "${CMAKE_SYSROOT}/lib"
+      NO_DEFAULT_PATH)
+
+    if(NOT XAXIDMA_INCLUDE_DIR)
+        message(FATAL_ERROR "Could not find xaxidma.h in the Yocto sysroot. Enable the axidma recipe or disable USE_XAXIDMA.")
+    endif()
+    if(NOT AXIDMA_LIBRARY)
+        message(FATAL_ERROR "Could not find libaxidma.a in the Yocto sysroot. Enable the axidma recipe or disable USE_XAXIDMA.")
+    endif()
+    if(NOT XILSTANDALONE_LIBRARY)
+        message(FATAL_ERROR "Could not find xilstandalone/libxil in the Yocto sysroot. Enable the standalone recipe or disable USE_XAXIDMA.")
+    endif()
+
+    add_compile_definitions(USE_XAXIDMA)
+    list(APPEND XAXIDMA_INCLUDE_DIRS ${XAXIDMA_INCLUDE_DIR})
+    list(APPEND XAXIDMA_SYSTEM_LINKS ${AXIDMA_LIBRARY} ${XILSTANDALONE_LIBRARY})
+
+    message(STATUS "Found XAxiDma include dir: ${XAXIDMA_INCLUDE_DIR}")
+    message(STATUS "Found XAxiDma library: ${AXIDMA_LIBRARY}")
+    message(STATUS "Found xilstandalone/libxil: ${XILSTANDALONE_LIBRARY}")
+endif()
+
 # Define an option for using custom XRT paths
 option(USE_LOCAL_XRT "Use custom XRT include and library paths" OFF)
 
@@ -262,10 +302,12 @@ add_dependencies(pynq
 target_link_libraries(pynq
   ${XRT_LIBRARIES}
   ${XRT_ADDITIONAL_LIBRARIES}
-  ${RFSOC_SYSTEM_LINKS})
+  ${RFSOC_SYSTEM_LINKS}
+  ${XAXIDMA_SYSTEM_LINKS})
 
 target_include_directories(pynq PRIVATE
-  ${RFSOC_INCLUDE_DIRS})
+  ${RFSOC_INCLUDE_DIRS}
+  ${XAXIDMA_INCLUDE_DIRS})
 
 target_link_libraries(remote_device_grpc_proto
   mmio_grpc_proto
@@ -294,5 +336,6 @@ foreach(_target
     ${_GRPC_GRPCPP}
     ${_PROTOBUF_LIBPROTOBUF}
     ${XRT_LIBRARIES}
-    ${XRT_ADDITIONAL_LIBRARIES})  # Link against additional XRT libraries if necessary
+    ${XRT_ADDITIONAL_LIBRARIES}
+    ${XAXIDMA_SYSTEM_LINKS})  # Link against additional XRT libraries if necessary
 endforeach()

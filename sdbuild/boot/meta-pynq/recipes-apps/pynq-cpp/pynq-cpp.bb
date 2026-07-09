@@ -5,10 +5,14 @@ LIC_FILES_CHKSUM = "file://${COMMON_LICENSE_DIR}/MIT;md5=0835ade698e0bcf8506ecda
 
 DEPENDS = "protobuf grpc protobuf-native grpc-native xrt"
 
+# XAxiDma support is enabled by default so remote DMA uses the embeddedsw
+# driver unless a build explicitly disables it.
+#
 # RFSoC services (xrfdc, xrfclk) are gated by the "rfsoc" PACKAGECONFIG.
 # The PYNQ Makefile writes a per-project bbappend that appends "rfsoc" to
 # PACKAGECONFIG when RFSoC_<board>=1.
-PACKAGECONFIG ??= ""
+PACKAGECONFIG ??= "axidma"
+PACKAGECONFIG[axidma] = "-DUSE_XAXIDMA=ON,-DUSE_XAXIDMA=OFF,axidma standalone,axidma standalone"
 PACKAGECONFIG[rfsoc] = "-DRFSOC=ON,-DRFSOC=OFF,rfdc libmetal,rfdc libmetal"
 
 SRC_URI = "file://cpp/CMakeLists.txt \
