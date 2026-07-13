@@ -149,6 +149,7 @@ endif()
 
 set(XAXIDMA_INCLUDE_DIRS "")
 set(XAXIDMA_SYSTEM_LINKS "")
+set(XAXIDMA_TARGET_DEFINITIONS "")
 if(USE_XAXIDMA)
     find_path(XAXIDMA_INCLUDE_DIR
       NAMES xaxidma.h
@@ -175,10 +176,10 @@ if(USE_XAXIDMA)
         message(FATAL_ERROR "Could not find xaxidma standalone support headers in the Yocto sysroot. Rebuild the axidma recipe.")
     endif()
 
-    add_compile_definitions(USE_XAXIDMA SDT)
     list(APPEND XAXIDMA_INCLUDE_DIRS ${XAXIDMA_INCLUDE_DIR})
     list(APPEND XAXIDMA_INCLUDE_DIRS ${XAXIDMA_SUPPORT_INCLUDE_DIR})
     list(APPEND XAXIDMA_SYSTEM_LINKS ${AXIDMA_LIBRARY})
+    list(APPEND XAXIDMA_TARGET_DEFINITIONS USE_XAXIDMA)
 
     message(STATUS "Found XAxiDma include dir: ${XAXIDMA_INCLUDE_DIR}")
     message(STATUS "Found XAxiDma support include dir: ${XAXIDMA_SUPPORT_INCLUDE_DIR}")
@@ -302,6 +303,9 @@ add_dependencies(pynq
   ${RFSOC_DEPS}
 )
 
+target_compile_definitions(pynq PUBLIC
+  ${XAXIDMA_TARGET_DEFINITIONS})
+
 target_link_libraries(pynq
   ${XRT_LIBRARIES}
   ${XRT_ADDITIONAL_LIBRARIES}
@@ -309,8 +313,13 @@ target_link_libraries(pynq
   ${XAXIDMA_SYSTEM_LINKS})
 
 target_include_directories(pynq PUBLIC
-  ${RFSOC_INCLUDE_DIRS}
-  ${XAXIDMA_INCLUDE_DIRS})
+  ${RFSOC_INCLUDE_DIRS})
+
+if(USE_XAXIDMA)
+  set_property(SOURCE dma.cc APPEND PROPERTY INCLUDE_DIRECTORIES
+    ${XAXIDMA_INCLUDE_DIRS})
+  set_source_files_properties(dma.cc PROPERTIES COMPILE_DEFINITIONS SDT)
+endif()
 
 target_link_libraries(remote_device_grpc_proto
   mmio_grpc_proto

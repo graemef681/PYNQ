@@ -20,7 +20,7 @@
 #include <thread>
 
 #ifdef USE_XAXIDMA
-#include "xstatus.h"
+#include "xaxidma.h"
 #endif
 
 DmaManager::DmaManager(uint64_t base_address, size_t length, std::optional<DmaHardwareConfig> config)
@@ -38,6 +38,8 @@ DmaManager::DmaManager(MMIO &mmio, std::optional<DmaHardwareConfig> config)
 {
     initialize_backend();
 }
+
+DmaManager::~DmaManager() = default;
 
 DmaTransferResult DmaManager::transfer(const DmaTransferRequest &request)
 {
@@ -109,7 +111,7 @@ DmaTransferResult DmaManager::transfer(const DmaTransferRequest &request)
         if (use_xaxidma_)
         {
             int status = XAxiDma_SimpleTransfer(
-                &axidma_instance_.value(),
+                axidma_instance_.get(),
                 static_cast<UINTPTR>(address),
                 static_cast<u32>(nbytes),
                 xaxidma_direction(request.direction));
@@ -193,7 +195,7 @@ DmaWaitResult DmaManager::wait(const DmaWaitRequest &request)
 #ifdef USE_XAXIDMA
             if (use_xaxidma_)
             {
-                if (!XAxiDma_Busy(&axidma_instance_.value(), xaxidma_direction(transfer.direction)))
+                if (!XAxiDma_Busy(axidma_instance_.get(), xaxidma_direction(transfer.direction)))
                 {
                     break;
                 }
@@ -472,8 +474,8 @@ std::optional<std::string> DmaManager::initialize_xaxidma(const DmaHardwareConfi
     native_config.AddrWidth = static_cast<int>(config.addr_width);
     native_config.SgLengthWidth = static_cast<int>(config.sg_length_width);
 
-    XAxiDma instance{};
-    int status = XAxiDma_CfgInitialize(&instance, &native_config);
+    auto instance = std::make_unique<XAxiDma>();
+    int status = XAxiDma_CfgInitialize(instance.get(), &native_config);
     if (status != XST_SUCCESS)
     {
         return std::string("XAxiDma_CfgInitialize failed: ") + xaxidma_status_to_string(status);
@@ -481,15 +483,14 @@ std::optional<std::string> DmaManager::initialize_xaxidma(const DmaHardwareConfi
 
     if (native_config.HasMm2S)
     {
-        XAxiDma_IntrDisable(&instance, XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DMA_TO_DEVICE);
+        XAxiDma_IntrDisable(instance.get(), XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DMA_TO_DEVICE);
     }
     if (native_config.HasS2Mm)
     {
-        XAxiDma_IntrDisable(&instance, XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DEVICE_TO_DMA);
+        XAxiDma_IntrDisable(instance.get(), XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DEVICE_TO_DMA);
     }
 
-    axidma_config_ = native_config;
-    axidma_instance_ = instance;
+    axidma_instance_ = std::move(instance);
     return std::nullopt;
 }
 

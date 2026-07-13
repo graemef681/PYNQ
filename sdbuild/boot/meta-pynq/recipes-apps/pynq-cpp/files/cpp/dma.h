@@ -25,7 +25,7 @@
 #include "mmio.h"
 
 #ifdef USE_XAXIDMA
-#include "xaxidma.h"
+struct XAxiDma;
 #endif
 
 enum class DmaChannelDirection
@@ -116,7 +116,7 @@ class DmaManager
 public:
     DmaManager(uint64_t base_address, size_t length = 0x1000, std::optional<DmaHardwareConfig> config = std::nullopt);
     explicit DmaManager(MMIO &mmio, std::optional<DmaHardwareConfig> config = std::nullopt);
-    ~DmaManager() = default;
+    ~DmaManager();
 
     DmaTransferResult transfer(const DmaTransferRequest &request);
     DmaWaitResult wait(const DmaWaitRequest &request);
@@ -157,8 +157,7 @@ private:
     std::string backend_error_;
 
 #ifdef USE_XAXIDMA
-    std::optional<XAxiDma> axidma_instance_;
-    std::optional<XAxiDma_Config> axidma_config_;
+    std::unique_ptr<XAxiDma> axidma_instance_;
 #endif
 
     MMIO &mmio() const;
