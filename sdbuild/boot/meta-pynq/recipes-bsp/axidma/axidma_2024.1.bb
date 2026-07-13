@@ -38,6 +38,7 @@ do_compile() {
 do_install() {
     install -d ${D}${libdir}
     install -d ${D}${includedir}
+    install -d ${D}${includedir}/xaxidma-standalone
 
     install -m 0644 libaxidma.a ${D}${libdir}/libaxidma.a
     install -m 0644 \
@@ -46,6 +47,11 @@ do_install() {
         ${S}/xaxidma_bdring.h \
         ${S}/xaxidma_hw.h \
         ${S}/xaxidma_porting_guide.h \
+        ${D}${includedir}/
+
+    # Keep XAxiDma's standalone support headers out of the global include
+    # namespace so they do not collide with Linux-side RFDC headers.
+    install -m 0644 \
         ${AXIDMA_STANDALONE_COMMON}/xbasic_types.h \
         ${AXIDMA_STANDALONE_COMMON}/xdebug.h \
         ${AXIDMA_STANDALONE_COMMON}/xil_assert.h \
@@ -54,12 +60,12 @@ do_install() {
         ${AXIDMA_STANDALONE_COMMON}/xil_types.h \
         ${AXIDMA_STANDALONE_COMMON}/xstatus.h \
         ${WORKDIR}/bspconfig.h \
-        ${D}${includedir}/
+        ${D}${includedir}/xaxidma-standalone/
 
     install -m 0644 \
         ${AXIDMA_STANDALONE_ARCH_DIR}/xil_cache.h \
         ${AXIDMA_STANDALONE_ARCH_DIR}/xpseudo_asm.h \
         ${AXIDMA_STANDALONE_ARCH_DIR}/${AXIDMA_ARCH_REG_HEADER} \
         ${AXIDMA_STANDALONE_COMMON_GCC}/xpseudo_asm_gcc.h \
-        ${D}${includedir}/
+        ${D}${includedir}/xaxidma-standalone/
 }

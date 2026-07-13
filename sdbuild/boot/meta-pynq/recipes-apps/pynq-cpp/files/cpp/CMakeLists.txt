@@ -154,6 +154,12 @@ if(USE_XAXIDMA)
       NAMES xaxidma.h
       PATHS "${CMAKE_SYSROOT}/usr/include" "${CMAKE_SYSROOT}/include"
       NO_DEFAULT_PATH)
+    find_path(XAXIDMA_SUPPORT_INCLUDE_DIR
+      NAMES xil_types.h
+      PATHS
+        "${CMAKE_SYSROOT}/usr/include/xaxidma-standalone"
+        "${CMAKE_SYSROOT}/include/xaxidma-standalone"
+      NO_DEFAULT_PATH)
     find_library(AXIDMA_LIBRARY
       NAMES axidma
       PATHS "${CMAKE_SYSROOT}/usr/lib" "${CMAKE_SYSROOT}/lib"
@@ -165,12 +171,17 @@ if(USE_XAXIDMA)
     if(NOT AXIDMA_LIBRARY)
         message(FATAL_ERROR "Could not find libaxidma.a in the Yocto sysroot. Enable the axidma recipe or disable USE_XAXIDMA.")
     endif()
+    if(NOT XAXIDMA_SUPPORT_INCLUDE_DIR)
+        message(FATAL_ERROR "Could not find xaxidma standalone support headers in the Yocto sysroot. Rebuild the axidma recipe.")
+    endif()
 
     add_compile_definitions(USE_XAXIDMA SDT)
     list(APPEND XAXIDMA_INCLUDE_DIRS ${XAXIDMA_INCLUDE_DIR})
+    list(APPEND XAXIDMA_INCLUDE_DIRS ${XAXIDMA_SUPPORT_INCLUDE_DIR})
     list(APPEND XAXIDMA_SYSTEM_LINKS ${AXIDMA_LIBRARY})
 
     message(STATUS "Found XAxiDma include dir: ${XAXIDMA_INCLUDE_DIR}")
+    message(STATUS "Found XAxiDma support include dir: ${XAXIDMA_SUPPORT_INCLUDE_DIR}")
     message(STATUS "Found XAxiDma library: ${AXIDMA_LIBRARY}")
 endif()
 
@@ -297,7 +308,7 @@ target_link_libraries(pynq
   ${RFSOC_SYSTEM_LINKS}
   ${XAXIDMA_SYSTEM_LINKS})
 
-target_include_directories(pynq PRIVATE
+target_include_directories(pynq PUBLIC
   ${RFSOC_INCLUDE_DIRS}
   ${XAXIDMA_INCLUDE_DIRS})
 
