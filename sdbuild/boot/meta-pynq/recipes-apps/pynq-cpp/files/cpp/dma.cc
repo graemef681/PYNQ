@@ -192,39 +192,11 @@ DmaWaitResult DmaManager::wait(const DmaWaitRequest &request)
             return result;
         }
 
-        ActiveTransfer &transfer = it->second;
-        uint64_t offset = channel_offset(transfer.direction);
-
-        auto start_time = std::chrono::steady_clock::now();
-        while (true)
-        {
-            uint32_t status_value = read_status(offset);
-            transfer.last_status = status_value;
-
-            auto error = decode_error(status_value);
-            if (error.has_value())
-            {
-                result.message = error.value();
-                result.dma_status = status_value;
-                return result;
-            }
-
 #ifdef USE_XAXIDMA
-            if (!XAxiDma_Busy(axidma_instance_.get(), xaxidma_direction(transfer.direction)))
-            {
-                std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_Busy"
-                          << " transfer_id=" << request.transfer_id
-                          << " direction=" << direction_to_string(transfer.direction)
-                          << " result=complete"
-                          << " status=0x" << std::hex << status_value << std::dec
-                          << std::endl;
-                break;
-            }
-#else
-            result.message = kXaxiDmaRequiredMessage;
-            return result;
-#endif
-
+        ActiveTransfer &transfer = it->second;
+        auto start_time = std::chrono::steady_clock::now();
+        while (XAxiDma_Busy(axidma_instance_.get(), xaxidma_direction(transfer.direction)))
+        {
             if (request.timeout_ms > 0)
             {
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -232,7 +204,7 @@ DmaWaitResult DmaManager::wait(const DmaWaitRequest &request)
                 if (static_cast<uint64_t>(elapsed.count()) > request.timeout_ms)
                 {
                     result.message = "DMA wait timed out.";
-                    result.dma_status = status_value;
+                    result.dma_status = read_xaxidma_status(transfer.direction);
                     return result;
                 }
             }
@@ -240,16 +212,38 @@ DmaWaitResult DmaManager::wait(const DmaWaitRequest &request)
             std::this_thread::sleep_for(std::chrono::microseconds(50));
         }
 
+        uint32_t status_value = read_xaxidma_status(transfer.direction);
+        transfer.last_status = status_value;
+
+        std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_Busy"
+                  << " transfer_id=" << request.transfer_id
+                  << " direction=" << direction_to_string(transfer.direction)
+                  << " result=complete"
+                  << " status=0x" << std::hex << status_value << std::dec
+                  << std::endl;
+
+        auto error = decode_xaxidma_error(status_value);
+        if (error.has_value())
+        {
+            result.message = error.value();
+            result.dma_status = status_value;
+            return result;
+        }
+
         if (transfer.direction == DmaChannelDirection::S2MM)
         {
             transfer.buffer->invalidate();
         }
 
-        transfer.transferred = mmio().read(offset + kLengthOffset);
+        transfer.transferred = read_xaxidma_transferred(transfer.direction);
         result.transferred = transfer.transferred;
         result.dma_status = transfer.last_status;
         result.success = true;
         transfers_.erase(it);
+#else
+        result.message = kXaxiDmaRequiredMessage;
+        return result;
+#endif
     }
     catch (const std::exception &e)
     {
@@ -279,10 +273,8 @@ DmaWaitResult DmaManager::stop(const std::string &transfer_id)
             return result;
         }
 
-        ActiveTransfer &transfer = it->second;
-        uint64_t offset = channel_offset(transfer.direction);
-
 #ifdef USE_XAXIDMA
+        ActiveTransfer &transfer = it->second;
         std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_Reset"
                   << " transfer_id=" << transfer_id
                   << " direction=" << direction_to_string(transfer.direction)
@@ -292,16 +284,17 @@ DmaWaitResult DmaManager::stop(const std::string &transfer_id)
         {
             std::this_thread::sleep_for(std::chrono::microseconds(50));
         }
-#else
-        result.message = kXaxiDmaRequiredMessage;
-        return result;
-#endif
-        transfer.last_status = read_status(offset);
+        transfer.last_status = read_xaxidma_status(transfer.direction);
+        transfer.transferred = read_xaxidma_transferred(transfer.direction);
 
         result.success = true;
         result.dma_status = transfer.last_status;
         result.transferred = transfer.transferred;
         transfers_.erase(it);
+#else
+        result.message = kXaxiDmaRequiredMessage;
+        return result;
+#endif
     }
     catch (const std::exception &e)
     {
@@ -331,19 +324,31 @@ DmaStatusResult DmaManager::status(const std::string &transfer_id)
             return result;
         }
 
+#ifdef USE_XAXIDMA
         ActiveTransfer &transfer = it->second;
-        uint64_t offset = channel_offset(transfer.direction);
-        uint32_t status_value = read_status(offset);
+        const bool busy = XAxiDma_Busy(axidma_instance_.get(), xaxidma_direction(transfer.direction));
+        uint32_t status_value = read_xaxidma_status(transfer.direction);
 
         transfer.last_status = status_value;
-        transfer.transferred = mmio().read(offset + kLengthOffset);
+        transfer.transferred = read_xaxidma_transferred(transfer.direction);
+
+        std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_Busy"
+                  << " transfer_id=" << transfer_id
+                  << " direction=" << direction_to_string(transfer.direction)
+                  << " result=" << (busy ? "busy" : "idle")
+                  << " status=0x" << std::hex << status_value << std::dec
+                  << std::endl;
 
         result.success = true;
-        result.running = is_running(status_value);
-        result.idle = is_idle(status_value);
-        result.halted = is_halted(status_value);
+        result.running = xaxidma_is_running(status_value);
+        result.idle = xaxidma_is_idle(status_value);
+        result.halted = xaxidma_is_halted(status_value);
         result.dma_status = status_value;
         result.transferred = transfer.transferred;
+#else
+        result.message = kXaxiDmaRequiredMessage;
+        return result;
+#endif
     }
     catch (const std::exception &e)
     {
@@ -383,60 +388,6 @@ std::string DmaManager::generate_transfer_id()
     std::ostringstream stream;
     stream << "dma-transfer-" << transfer_counter_++;
     return stream.str();
-}
-
-uint64_t DmaManager::channel_offset(DmaChannelDirection direction) const
-{
-    return (direction == DmaChannelDirection::S2MM) ? kRxOffset : kTxOffset;
-}
-
-uint32_t DmaManager::read_status(uint64_t channel_offset) const
-{
-    return mmio().read(channel_offset + kDmasrOffset);
-}
-
-bool DmaManager::is_running(uint32_t status) const
-{
-    return (status & 0x01u) == 0x00u;
-}
-
-bool DmaManager::is_idle(uint32_t status) const
-{
-    return (status & 0x02u) == 0x02u;
-}
-
-bool DmaManager::is_halted(uint32_t status) const
-{
-    return (status & 0x01u) == 0x01u;
-}
-
-std::optional<std::string> DmaManager::decode_error(uint32_t status) const
-{
-    if (status & 0x10u)
-    {
-        return std::string("DMA Internal Error (transfer length 0?)");
-    }
-    if (status & 0x20u)
-    {
-        return std::string("DMA Slave Error (cannot access memory map interface)");
-    }
-    if (status & 0x40u)
-    {
-        return std::string("DMA Decode Error (invalid address)");
-    }
-    if (status & 0x100u)
-    {
-        return std::string("DMA Scatter-Gather Internal Error");
-    }
-    if (status & 0x200u)
-    {
-        return std::string("DMA Scatter-Gather Slave Error");
-    }
-    if (status & 0x400u)
-    {
-        return std::string("DMA Scatter-Gather Decode Error");
-    }
-    return std::nullopt;
 }
 
 void DmaManager::initialize_backend()
@@ -581,6 +532,64 @@ std::string DmaManager::xaxidma_status_to_string(int status) const
 int DmaManager::xaxidma_direction(DmaChannelDirection direction) const
 {
     return (direction == DmaChannelDirection::S2MM) ? XAXIDMA_DEVICE_TO_DMA : XAXIDMA_DMA_TO_DEVICE;
+}
+
+uint32_t DmaManager::read_xaxidma_status(DmaChannelDirection direction) const
+{
+    return XAxiDma_ReadReg(
+        axidma_instance_->RegBase + (XAXIDMA_RX_OFFSET * xaxidma_direction(direction)),
+        XAXIDMA_SR_OFFSET);
+}
+
+uint32_t DmaManager::read_xaxidma_transferred(DmaChannelDirection direction) const
+{
+    return XAxiDma_ReadReg(
+        axidma_instance_->RegBase + (XAXIDMA_RX_OFFSET * xaxidma_direction(direction)),
+        XAXIDMA_BUFFLEN_OFFSET);
+}
+
+bool DmaManager::xaxidma_is_running(uint32_t status) const
+{
+    return (status & XAXIDMA_HALTED_MASK) == 0u;
+}
+
+bool DmaManager::xaxidma_is_idle(uint32_t status) const
+{
+    return (status & XAXIDMA_IDLE_MASK) == XAXIDMA_IDLE_MASK;
+}
+
+bool DmaManager::xaxidma_is_halted(uint32_t status) const
+{
+    return (status & XAXIDMA_HALTED_MASK) == XAXIDMA_HALTED_MASK;
+}
+
+std::optional<std::string> DmaManager::decode_xaxidma_error(uint32_t status) const
+{
+    if (status & XAXIDMA_ERR_INTERNAL_MASK)
+    {
+        return std::string("DMA Internal Error (transfer length 0?)");
+    }
+    if (status & XAXIDMA_ERR_SLAVE_MASK)
+    {
+        return std::string("DMA Slave Error (cannot access memory map interface)");
+    }
+    if (status & XAXIDMA_ERR_DECODE_MASK)
+    {
+        return std::string("DMA Decode Error (invalid address)");
+    }
+    if (status & XAXIDMA_ERR_SG_INT_MASK)
+    {
+        return std::string("DMA Scatter-Gather Internal Error");
+    }
+    if (status & XAXIDMA_ERR_SG_SLV_MASK)
+    {
+        return std::string("DMA Scatter-Gather Slave Error");
+    }
+    if (status & XAXIDMA_ERR_SG_DEC_MASK)
+    {
+        return std::string("DMA Scatter-Gather Decode Error");
+    }
+    return std::nullopt;
 }
 #endif
 

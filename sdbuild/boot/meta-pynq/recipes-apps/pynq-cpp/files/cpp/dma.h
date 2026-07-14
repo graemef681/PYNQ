@@ -138,16 +138,6 @@ private:
         uint32_t last_status = 0;
     };
 
-    static constexpr uint64_t kTxOffset = 0x00;
-    static constexpr uint64_t kRxOffset = 0x30;
-    static constexpr uint64_t kDmacrOffset = 0x00;
-    static constexpr uint64_t kDmasrOffset = 0x04;
-    static constexpr uint64_t kAddrLowOffset = 0x18;
-    static constexpr uint64_t kAddrHighOffset = 0x1C;
-    static constexpr uint64_t kLengthOffset = 0x28;
-    static constexpr uint32_t kRunStop = 0x0001;
-    static constexpr uint32_t kInterruptEnable = 0x1000;
-
     std::unique_ptr<MMIO> owned_mmio_;
     MMIO *mmio_;
     std::unordered_map<std::string, ActiveTransfer> transfers_;
@@ -162,12 +152,6 @@ private:
 
     MMIO &mmio() const;
     std::string generate_transfer_id();
-    uint64_t channel_offset(DmaChannelDirection direction) const;
-    uint32_t read_status(uint64_t channel_offset) const;
-    bool is_running(uint32_t status) const;
-    bool is_idle(uint32_t status) const;
-    bool is_halted(uint32_t status) const;
-    std::optional<std::string> decode_error(uint32_t status) const;
     void initialize_backend();
     bool ensure_backend_ready(std::string &message) const;
 
@@ -175,6 +159,12 @@ private:
     std::optional<std::string> initialize_xaxidma(const DmaHardwareConfig &config);
     std::string xaxidma_status_to_string(int status) const;
     int xaxidma_direction(DmaChannelDirection direction) const;
+    uint32_t read_xaxidma_status(DmaChannelDirection direction) const;
+    uint32_t read_xaxidma_transferred(DmaChannelDirection direction) const;
+    bool xaxidma_is_running(uint32_t status) const;
+    bool xaxidma_is_idle(uint32_t status) const;
+    bool xaxidma_is_halted(uint32_t status) const;
+    std::optional<std::string> decode_xaxidma_error(uint32_t status) const;
 #endif
 };
 
