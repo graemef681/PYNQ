@@ -6,14 +6,14 @@
  * Created: 2026-06-16
  *
  * This file implements a service-independent DMA manager that mirrors the
- * high-level operations used by the Python PYNQ DMA driver. It can drive the
- * AXI DMA either via direct MMIO register access or via the embeddedsw
- * XAxiDma driver when the build and bind request supply enough metadata.
+ * high-level operations used by the Python PYNQ DMA driver. Remote DMA
+ * requests are handled exclusively through the embeddedsw XAxiDma driver.
  */
 
 #include "dma.h"
 
 #include <chrono>
+#include <iostream>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -22,6 +22,26 @@
 #ifdef USE_XAXIDMA
 #include "xaxidma.h"
 #endif
+
+namespace
+{
+constexpr const char *kXaxiDmaRequiredMessage =
+    "DMA RPC driver requires the PYNQ.remote image to be built with USE_XAXIDMA enabled.";
+
+const char *direction_to_string(DmaChannelDirection direction)
+{
+    return (direction == DmaChannelDirection::S2MM) ? "S2MM" : "MM2S";
+}
+
+const char *xaxidma_compile_state()
+{
+#ifdef USE_XAXIDMA
+    return "USE_XAXIDMA=ON";
+#else
+    return "USE_XAXIDMA=OFF";
+#endif
+}
+}
 
 DmaManager::DmaManager(uint64_t base_address, size_t length, std::optional<DmaHardwareConfig> config)
     : owned_mmio_(std::make_unique<MMIO>(base_address, length)),
@@ -99,7 +119,6 @@ DmaTransferResult DmaManager::transfer(const DmaTransferRequest &request)
             return result;
         }
 
-        uint64_t offset = channel_offset(request.direction);
         uint64_t address = request.buffer->physical_address() + request.start;
 
         if (request.direction == DmaChannelDirection::MM2S)
@@ -108,27 +127,25 @@ DmaTransferResult DmaManager::transfer(const DmaTransferRequest &request)
         }
 
 #ifdef USE_XAXIDMA
-        if (use_xaxidma_)
+        std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_SimpleTransfer"
+                  << " direction=" << direction_to_string(request.direction)
+                  << " address=0x" << std::hex << address << std::dec
+                  << " nbytes=" << nbytes
+                  << std::endl;
+        int status = XAxiDma_SimpleTransfer(
+            axidma_instance_.get(),
+            static_cast<UINTPTR>(address),
+            static_cast<u32>(nbytes),
+            xaxidma_direction(request.direction));
+        if (status != XST_SUCCESS)
         {
-            int status = XAxiDma_SimpleTransfer(
-                axidma_instance_.get(),
-                static_cast<UINTPTR>(address),
-                static_cast<u32>(nbytes),
-                xaxidma_direction(request.direction));
-            if (status != XST_SUCCESS)
-            {
-                result.message = "XAxiDma_SimpleTransfer failed: " + xaxidma_status_to_string(status);
-                return result;
-            }
+            result.message = "XAxiDma_SimpleTransfer failed: " + xaxidma_status_to_string(status);
+            return result;
         }
-        else
+#else
+        result.message = kXaxiDmaRequiredMessage;
+        return result;
 #endif
-        {
-            mmio().write(kRunStop, offset + kDmacrOffset);
-            mmio().write(static_cast<uint32_t>(address & 0xFFFFFFFFu), offset + kAddrLowOffset);
-            mmio().write(static_cast<uint32_t>((address >> 32) & 0xFFFFFFFFu), offset + kAddrHighOffset);
-            mmio().write(static_cast<uint32_t>(nbytes), offset + kLengthOffset);
-        }
 
         ActiveTransfer transfer;
         transfer.direction = request.direction;
@@ -193,21 +210,20 @@ DmaWaitResult DmaManager::wait(const DmaWaitRequest &request)
             }
 
 #ifdef USE_XAXIDMA
-            if (use_xaxidma_)
+            if (!XAxiDma_Busy(axidma_instance_.get(), xaxidma_direction(transfer.direction)))
             {
-                if (!XAxiDma_Busy(axidma_instance_.get(), xaxidma_direction(transfer.direction)))
-                {
-                    break;
-                }
+                std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_Busy"
+                          << " transfer_id=" << request.transfer_id
+                          << " direction=" << direction_to_string(transfer.direction)
+                          << " result=complete"
+                          << " status=0x" << std::hex << status_value << std::dec
+                          << std::endl;
+                break;
             }
-            else
+#else
+            result.message = kXaxiDmaRequiredMessage;
+            return result;
 #endif
-            {
-                if (is_idle(status_value))
-                {
-                    break;
-                }
-            }
 
             if (request.timeout_ms > 0)
             {
@@ -266,7 +282,20 @@ DmaWaitResult DmaManager::stop(const std::string &transfer_id)
         ActiveTransfer &transfer = it->second;
         uint64_t offset = channel_offset(transfer.direction);
 
-        mmio().write(0x0000, offset + kDmacrOffset);
+#ifdef USE_XAXIDMA
+        std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_Reset"
+                  << " transfer_id=" << transfer_id
+                  << " direction=" << direction_to_string(transfer.direction)
+                  << std::endl;
+        XAxiDma_Reset(axidma_instance_.get());
+        while (!XAxiDma_ResetIsDone(axidma_instance_.get()))
+        {
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+        }
+#else
+        result.message = kXaxiDmaRequiredMessage;
+        return result;
+#endif
         transfer.last_status = read_status(offset);
 
         result.success = true;
@@ -415,21 +444,44 @@ void DmaManager::initialize_backend()
     backend_error_.clear();
     use_xaxidma_ = false;
 
+    std::cout << "[pynq-remote-dma] backend=XAxiDma-only"
+              << " compile_state=" << xaxidma_compile_state()
+              << " config_present=" << (hardware_config_.has_value() ? "true" : "false")
+              << std::endl;
+
     if (!hardware_config_.has_value())
     {
+        backend_error_ = std::string(kXaxiDmaRequiredMessage) +
+                         " AXI DMA hardware metadata is also required to initialize the XAxiDma driver.";
+        std::cout << "[pynq-remote-dma] backend=unavailable"
+                  << " reason=\"" << backend_error_ << "\""
+                  << std::endl;
         return;
     }
 
-#ifdef USE_XAXIDMA
+#ifndef USE_XAXIDMA
+    backend_error_ = std::string(kXaxiDmaRequiredMessage) +
+                     " This pynq-remote binary was compiled with USE_XAXIDMA disabled.";
+    std::cout << "[pynq-remote-dma] backend=unavailable"
+              << " reason=\"" << backend_error_ << "\""
+              << std::endl;
+    return;
+#endif
+
     use_xaxidma_ = true;
     if (auto error = initialize_xaxidma(hardware_config_.value()); error.has_value())
     {
-        backend_error_ = error.value();
+        backend_error_ = error.value() + " " + kXaxiDmaRequiredMessage;
         use_xaxidma_ = false;
+        std::cout << "[pynq-remote-dma] backend=unavailable"
+                  << " reason=\"" << backend_error_ << "\""
+                  << std::endl;
+        return;
     }
-#else
-    backend_error_ = "XAxiDma backend requested but this build was compiled without USE_XAXIDMA.";
-#endif
+
+    std::cout << "[pynq-remote-dma] backend=XAxiDma"
+              << " state=ready"
+              << std::endl;
 }
 
 bool DmaManager::ensure_backend_ready(std::string &message) const
@@ -481,12 +533,25 @@ std::optional<std::string> DmaManager::initialize_xaxidma(const DmaHardwareConfi
         return std::string("XAxiDma_CfgInitialize failed: ") + xaxidma_status_to_string(status);
     }
 
+    std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_CfgInitialize"
+              << " base=0x" << std::hex << native_config.BaseAddr << std::dec
+              << " has_mm2s=" << native_config.HasMm2S
+              << " has_s2mm=" << native_config.HasS2Mm
+              << " has_sg=" << native_config.HasSg
+              << " addr_width=" << native_config.AddrWidth
+              << " sg_length_width=" << native_config.SgLengthWidth
+              << std::endl;
+
     if (native_config.HasMm2S)
     {
+        std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_IntrDisable direction=MM2S"
+                  << std::endl;
         XAxiDma_IntrDisable(instance.get(), XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DMA_TO_DEVICE);
     }
     if (native_config.HasS2Mm)
     {
+        std::cout << "[pynq-remote-dma] backend=XAxiDma call=XAxiDma_IntrDisable direction=S2MM"
+                  << std::endl;
         XAxiDma_IntrDisable(instance.get(), XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DEVICE_TO_DMA);
     }
 
