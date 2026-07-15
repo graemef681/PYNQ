@@ -1,3 +1,4 @@
+import atexit
 import os
 from pathlib import Path
 import pickle
@@ -152,6 +153,7 @@ def _get_bitstream_handler(bitfile_name):
         raise RuntimeError("Unknown file format")
     return _bitstream_handlers[filetype](bitfile_name)
 
+
 class RemoteDevice(Device):
     """Device class for interacting with remote PYNQ devices via gRPC
 
@@ -177,10 +179,22 @@ class RemoteDevice(Device):
             devices = [RemoteDevice(i, ip_list[i]) for i in range(num)]
             return devices
 
-    def __init__(self, index=0, ip_addr=None, port=PYNQ_PORT, tag="remote{}"):
+    def __init__(
+        self, index=0, ip_addr=None, port=PYNQ_PORT, tag="remote{}",
+        auto_cleanup=True
+    ):
+        """Create a remote PYNQ device connection.
+
+        Parameters
+        ----------
+        auto_cleanup : bool
+            If True, automatically release stale server-side resources when
+            connecting, before full overlay downloads, and when this client exits.
+        """
         super().__init__(tag.format(index))
         self.ip_addr = ip_addr
         self.port = port
+        self.auto_cleanup = auto_cleanup
         self.client = GrpcChannel(self.ip_addr, self.port)
         self._stub = {
             'device': remote_device_pb2_grpc.RemoteDeviceStub(self.client.channel),
@@ -188,6 +202,11 @@ class RemoteDevice(Device):
             'buffer': buffer_pb2_grpc.RemoteBufferStub(self.client.channel),
             'gpio': gpio_pb2_grpc.GpioStub(self.client.channel),
         }
+
+        self._closed = False
+        if self.auto_cleanup:
+            self.cleanup()
+        atexit.register(self.close)
 
         self.arch = self.get_arch()
         self.name = self.get_board_name()
@@ -383,6 +402,28 @@ class RemoteDevice(Device):
         """
         return RemoteMMIO(self._stub['mmio'], address, length)
 
+    def cleanup(self):
+        """Release server-side resources owned by previous remote sessions.
+
+        This is intentionally broad because a newly started host Python kernel
+        cannot know which buffers, MMIO mappings, or GPIO handles are currently
+        orphaned on the target-side server.
+        """
+        response = self._stub['device'].cleanup(remote_device_pb2.CleanupRequest())
+        if response.msg:
+            raise RuntimeError(response.msg)
+        return response
+
+    def close(self):
+        """Best-effort cleanup hook for orderly Python interpreter shutdown."""
+        if self._closed or not self.auto_cleanup:
+            return
+        self._closed = True
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+
     def download(self, bitstream, parser=None):
         """Download bitstream to the remote FPGA device
 
@@ -407,6 +448,8 @@ class RemoteDevice(Device):
             bitstream.binfile_name = Path(bitstream.bitfile_name).stem + ".bin"
             
         if not bitstream.partial:
+            if self.auto_cleanup:
+                self.cleanup()
             self.shutdown()
             self.gen_cache(bitstream, parser)
             flag = "0"
@@ -915,17 +958,38 @@ class RemoteMMIO:
         Length of memory-mapped region in bytes
     """
         self._stub = stub
+        self._closed = True
+        self.mmio_id = None
         response = self._stub.get_mmio(
             mmio_pb2.GetMmioRequest(base_addr=address, length=length)
         )
         if response.msg:
             raise RuntimeError(response.msg)
         self.mmio_id = response.mmio_id
+        self._closed = False
 
         self._hook = _AccessHook(address, self)
         stype = tnp._convert_dtype("u4", to="array")
         fake_buffer = tnp._FakeBuffer(length // 4, stype, hook=self._hook)
         self.array = tnp.ndarray(shape=(length // 4,), dtype="u4", buffer=fake_buffer)
+
+    def close(self):
+        """Release the server-side MMIO mapping."""
+        if self._closed:
+            return
+        self._closed = True
+        response = self._stub.release_mmio(
+            mmio_pb2.ReleaseMmioRequest(mmio_id=self.mmio_id)
+        )
+        if response.msg:
+            raise RuntimeError(response.msg)
+        self.mmio_id = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def read(self, offset=0, length=4, word_order="little"):
         if length not in [1, 2, 4, 8]:

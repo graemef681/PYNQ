@@ -72,6 +72,8 @@ using grpc::Status;
 using mmio::GetMmioRequest;
 using mmio::GetMmioResponse;
 using mmio::Mmio;
+using mmio::ReleaseMmioRequest;
+using mmio::ReleaseMmioResponse;
 using mmio::ReadRequest;
 using mmio::ReadResponse;
 using mmio::WriteRequest;
@@ -85,6 +87,8 @@ using remote_device::SetPlClkRequest;
 using remote_device::SetPlClkResponse;
 using remote_device::ShutdownRequest;
 using remote_device::ShutdownResponse;
+using remote_device::CleanupRequest;
+using remote_device::CleanupResponse;
 using remote_device::ReadFileRequest;
 using remote_device::ReadFileResponse;
 using remote_device::WriteFileRequest;
@@ -158,6 +162,13 @@ public:
     {
         device_name = device.get_info<xrt::info::device::name>();
         std::cout << "device name: " << device_name << "\n";
+    }
+
+    std::size_t clearBuffers()
+    {
+        std::size_t released = buffers_.size();
+        buffers_.clear();
+        return released;
     }
 
 private:
@@ -575,6 +586,19 @@ public:
         mmios_[mmio_id] = std::make_unique<MMIO>(base_addr, length);
     }
 
+    bool releaseMMIO(const std::string &mmio_id)
+    {
+        return mmios_.erase(mmio_id) > 0;
+    }
+
+    std::size_t clearMMIOs()
+    {
+        std::size_t released = mmios_.size();
+        mmios_.clear();
+        count = 0;
+        return released;
+    }
+
     /**
      * @brief Finds an MMIO object by its ID.
      * Searches the internal map for an MMIO object with the given identifier.
@@ -611,6 +635,28 @@ public:
         addMMIO(request->base_addr(), request->length(), mmio_id);
         count += 1;
         response->set_mmio_id(mmio_id);
+        return grpc::Status::OK;
+    }
+
+    /**
+     * @brief Handles the ReleaseMmio gRPC request.
+     * Releases a server-side MMIO object by identifier. This RPC is
+     * idempotent so destructor-based cleanup can safely race global cleanup.
+     * @param context Server context for the request.
+     * @param request ReleaseMmioRequest message.
+     * @param response ReleaseMmioResponse message.
+     * @return gRPC status.
+     */
+    Status release_mmio(ServerContext *context, const ReleaseMmioRequest *request, ReleaseMmioResponse *response) override
+    {
+        bool released = releaseMMIO(request->mmio_id());
+#ifdef DEBUG
+        std::cout << "Function: release_mmio, "
+                  << "mmio_id=" << request->mmio_id() << ", "
+                  << "released=" << (released ? "true" : "false")
+                  << std::endl;
+#endif
+        response->set_status(true);
         return grpc::Status::OK;
     }
 
@@ -692,6 +738,14 @@ public:
     void addGPIO(uint32_t index, std::string direction, std::string gpio_id)
     {
         gpios_[gpio_id] = std::make_unique<GPIO>(index, direction);
+    }
+
+    std::size_t clearGPIOs()
+    {
+        std::size_t released = gpios_.size();
+        gpios_.clear();
+        count = 0;
+        return released;
     }
 
     /**
@@ -897,6 +951,9 @@ class RemoteDeviceImpl final : public RemoteDevice::Service
 private:
     const std::string FIRMWARE = "/lib/firmware/";                               ///< Directory for bitstream files
     Device remote_device_;
+    BufferImpl* buffer_service_ = nullptr; ///< Cleared when a client starts a new overlay/session.
+    MMIOImpl* mmio_service_ = nullptr;     ///< Cleared when a client starts a new overlay/session.
+    GPIOImpl* gpio_service_ = nullptr;     ///< Cleared when a client starts a new overlay/session.
 #ifdef RFSOC
     XrfdcImpl* xrfdc_service_ = nullptr;   ///< Notified on bitstream download so it can drop its stale RFDC mapping.
     XrfclkImpl* xrfclk_service_ = nullptr; ///< Notified on bitstream download so it can drop its cached clock-device state.
@@ -915,6 +972,19 @@ public:
             std::filesystem::create_directories(FIRMWARE);
             std::cout << "Created directory: " << FIRMWARE << std::endl;
         }
+    }
+
+    /**
+     * @brief Register resource-owning service impls for cleanup requests.
+     *
+     * These pointers are non-owning; the services live in RunServer's stack
+     * frame for the lifetime of the gRPC server.
+     */
+    void set_resource_services(BufferImpl* buffer, MMIOImpl* mmio, GPIOImpl* gpio)
+    {
+        buffer_service_ = buffer;
+        mmio_service_ = mmio;
+        gpio_service_ = gpio;
     }
 
 #ifdef RFSOC
@@ -980,6 +1050,44 @@ public:
 
         return grpc::Status::OK;
     }
+
+    /**
+     * @brief Handles the Cleanup gRPC request.
+     *
+     * Clears server-side resource handles that may have been orphaned by a
+     * host Python kernel restart or by stale overlay objects.
+     */
+    Status cleanup(ServerContext *context, const CleanupRequest *request, CleanupResponse *response) override
+    {
+        uint64_t buffers_freed = 0;
+        uint64_t mmios_freed = 0;
+        uint64_t gpios_freed = 0;
+
+        if (buffer_service_)
+        {
+            buffers_freed = buffer_service_->clearBuffers();
+        }
+        if (mmio_service_)
+        {
+            mmios_freed = mmio_service_->clearMMIOs();
+        }
+        if (gpio_service_)
+        {
+            gpios_freed = gpio_service_->clearGPIOs();
+        }
+
+#ifdef DEBUG
+        std::cout << "Cleanup Request Received: "
+                  << "buffers_freed=" << buffers_freed << ", "
+                  << "mmios_freed=" << mmios_freed << ", "
+                  << "gpios_freed=" << gpios_freed
+                  << std::endl;
+#endif
+
+        response->set_status(true);
+        return grpc::Status::OK;
+    }
+
     /**
      * @brief Handles the ExistsFile gRPC request.
      * Checks if the specified file exists.
@@ -1082,6 +1190,7 @@ void RunServer(uint16_t port)
     MMIOImpl mmio_service;                  // Create MMIO rpc handler
     BufferImpl buffer_service;              // Create Buffer rpc handler
     GPIOImpl gpio_service;                  // Create Gpio rpc handler
+    remote_device_service.set_resource_services(&buffer_service, &mmio_service, &gpio_service);
 #ifdef RFSOC
     XrfclkImpl xrfclk_service;              // Create Xrfclk rpc handler
     XrfdcImpl xrfdc_service;                // Create Xrfdc rpc handler
