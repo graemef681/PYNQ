@@ -11,13 +11,13 @@ PYNQ users can now create high performance embedded applications with
 -	high bandwidth IO
 -	low latency control
 
-See the <a href="http://www.pynq.io/" target="_blank">PYNQ webpage</a> for an overview of the project, and find <a href="http://pynq.readthedocs.io" target="_blank">documentation on ReadTheDocs</a> to get started. 
+See the <a href="http://www.pynq.io/" target="_blank">PYNQ webpage</a> for an overview of the project, and find <a href="http://pynq.readthedocs.io" target="_blank">documentation on ReadTheDocs</a> to get started.
 
 ## Precompiled Image
 
-The project currently supports <a href="https://www.pynq.io/boards.html" target="_blank">multiple boards</a>. 
+The project currently supports <a href="https://www.pynq.io/boards.html" target="_blank">multiple boards</a>.
 
-You can download a precompiled image, write the image to a micro SD card, and boot the board from the micro SD card. 
+You can download a precompiled image, write the image to a micro SD card, and boot the board from the micro SD card.
 
 ## Quick Start
 
@@ -43,9 +43,68 @@ All board related files including Vivado projects, bitstreams, and example noteb
 
 In Linux, you can rebuild the overlay by running *make* in the corresponding overlay folder (e.g. `/boards/Pynq-Z1/base`). In Windows, you need to source the appropriate tcl files in the corresponding overlay folder.
 
+## Remote Cleanup PR Notes
+
+This branch adds single-client PYNQ.remote resource cleanup. Notes to include in
+the PR write-up:
+
+- Remote cleanup is deliberately global for single-client use. A new
+  `RemoteDevice` construction cleans stale target-side buffers, MMIOs, and GPIOs
+  left by previous host kernels.
+- Full overlay downloads clean stale remote resources before overlay clock
+  programming creates fresh clock/register MMIOs. Raw `Bitstream.download()` /
+  `RemoteDevice.download()` do not auto-clean, matching the lower-level embedded
+  PYNQ behavior where callers own any required cleanup and clock setup.
+- Remote GPIO cleanup is verified at the Linux sysfs layer as well as the
+  server handle layer: explicit release and global cleanup both need to remove
+  the target-side `/sys/class/gpio/gpioN` export, not just forget the RPC
+  handle.
+- Remote cleanup clears server-side buffer, MMIO, and GPIO handle tables and
+  advances a cleanup epoch on the server. New handles are allocated as numbered
+  opaque strings like `epoch:number`, so stale handles from earlier epochs stay
+  invalid even though numbering restarts after cleanup.
+- The `pynq-remote` server now uses the same `epoch:number` handle scheme for
+  buffers, MMIOs, and GPIOs, and returns `RESOURCE_EXHAUSTED` if the 64-bit
+  epoch/counter space is ever exhausted rather than silently wrapping or
+  reusing old handles.
+- `Register(addr)` now retains its backing `MMIO` while the `Register` exists.
+  Without this, `MMIO.__del__()` could release a `RemoteMMIO` too early for
+  temporary register operations. This was found while adding `RemoteMMIO`
+  cleanup.
+- Remote AXI-width setup now passes `device=self` explicitly into
+  `Register(...)`, avoiding accidental use of the wrong active device.
+- We intentionally did not implement host-side invalidation of every stale
+  Python `RemoteMMIO` / `RemoteBuffer` / `RemoteGPIO` object on global cleanup
+  in this branch. That can be added later with per-endpoint weak tracking for
+  single-client mode, but it should be designed separately from the future
+  multi-client story and does not replace server-side stale-handle protection.
+- The shared bitstream handler now treats a file as XSA only when the requested
+  path itself has a `.xsa` suffix. This fixes the same-stem sibling case where
+  loading `foo.bit` could be misclassified if `foo.xsa` existed beside it.
+
+Example stale-handle bug avoided by epoch-prefixed numbered handles:
+
+```python
+from pynq.pl_server.remote_device import RemoteDevice
+
+dev = RemoteDevice(ip_addr="192.168.2.197", auto_cleanup=False)
+
+old_mmio = dev.mmap(0xA0000000, 0x1000)   # server handle "0:0"
+old_mmio.read(0)
+
+dev.cleanup()                             # clears server MMIOs, advances epoch
+
+new_mmio = dev.mmap(0xB0000000, 0x1000)   # should now be handle "1:0"
+
+# If cleanup only reset a plain numbered counter, old_mmio could alias new_mmio.
+old_mmio.read(0)                          # should fail, not read new_mmio
+old_mmio.close()                          # should not release new_mmio
+new_mmio.read(0)                          # should still work
+```
+
 ## Contribute
 
-Contributions to this repository are welcomed. Please refer to <a href="https://github.com/Xilinx/PYNQ/blob/master/CONTRIBUTING.md" target="_blank">CONTRIBUTING.md</a> 
+Contributions to this repository are welcomed. Please refer to <a href="https://github.com/Xilinx/PYNQ/blob/master/CONTRIBUTING.md" target="_blank">CONTRIBUTING.md</a>
 for how to improve PYNQ.
 
 ## Support
