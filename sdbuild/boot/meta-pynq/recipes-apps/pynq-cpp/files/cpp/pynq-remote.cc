@@ -18,6 +18,7 @@
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
 #include <numeric>
+#include <limits>
 #include <sstream>
 #include <filesystem>
 
@@ -137,6 +138,61 @@ using xrfdc::GetIMRPassModeResponse;
 using xrfdc::GetDACCompModeResponse;
 #endif
 
+namespace {
+
+class HandleGenerator
+{
+private:
+    uint64_t epoch_ = 0;
+    uint64_t next_id_ = 0;
+    bool exhausted_ = false;
+
+public:
+    bool try_generate(std::string &id_out)
+    {
+        if (exhausted_)
+        {
+            return false;
+        }
+
+        id_out = std::to_string(epoch_) + ":" + std::to_string(next_id_);
+        if (next_id_ == std::numeric_limits<uint64_t>::max())
+        {
+            if (epoch_ == std::numeric_limits<uint64_t>::max())
+            {
+                exhausted_ = true;
+            }
+            else
+            {
+                epoch_ += 1;
+                next_id_ = 0;
+            }
+        }
+        else
+        {
+            next_id_ += 1;
+        }
+        return true;
+    }
+
+    void advance_epoch()
+    {
+        if (exhausted_)
+        {
+            return;
+        }
+        if (epoch_ == std::numeric_limits<uint64_t>::max())
+        {
+            exhausted_ = true;
+            return;
+        }
+        epoch_ += 1;
+        next_id_ = 0;
+    }
+};
+
+} // namespace
+
 #define DEBUG
 
 class BufferImpl final : public RemoteBuffer::Service
@@ -145,13 +201,7 @@ private:
     xrt::device device;
     XrtBufferManager manager;
     std::unordered_map<std::string, std::unique_ptr<BufferRemote>> buffers_;
-
-    std::string generate_unique_id(const std::unique_ptr<BufferRemote> &buffer)
-    {
-        std::ostringstream oss;
-        oss << buffer.get();
-        return oss.str();
-    }
+    HandleGenerator handle_generator_;
 
 public:
     std::string device_name = "";
@@ -168,6 +218,7 @@ public:
     {
         std::size_t released = buffers_.size();
         buffers_.clear();
+        handle_generator_.advance_epoch();
         return released;
     }
 
@@ -210,7 +261,14 @@ private:
         try
         {
             auto buffer = std::make_unique<BufferRemote>(static_cast<size_t>(request->size()), request->dtype(), manager, request->cacheable());
-            std::string buffer_id = generate_unique_id(buffer);
+            std::string buffer_id;
+            if (!handle_generator_.try_generate(buffer_id))
+            {
+                return grpc::Status(
+                    grpc::StatusCode::RESOURCE_EXHAUSTED,
+                    "Buffer ID space exhausted."
+                );
+            }
             buffers_[buffer_id] = std::move(buffer);
             response->set_buffer_id(buffer_id);
         }
@@ -571,7 +629,7 @@ class MMIOImpl final : public Mmio::Service
      */
 private:
     std::unordered_map<std::string, std::unique_ptr<MMIO>> mmios_; ///< Map to store MMIO objects
-    uint64_t count = 0;                                            ///< Counter for generating MMIO IDs
+    HandleGenerator handle_generator_;
 
 public:
     /**
@@ -595,7 +653,7 @@ public:
     {
         std::size_t released = mmios_.size();
         mmios_.clear();
-        count = 0;
+        handle_generator_.advance_epoch();
         return released;
     }
 
@@ -631,9 +689,15 @@ public:
                   << "length=" << request->length()
                   << std::endl;
         #endif
-        std::string mmio_id = std::to_string(count);
+        std::string mmio_id;
+        if (!handle_generator_.try_generate(mmio_id))
+        {
+            return grpc::Status(
+                grpc::StatusCode::RESOURCE_EXHAUSTED,
+                "MMIO ID space exhausted."
+            );
+        }
         addMMIO(request->base_addr(), request->length(), mmio_id);
-        count += 1;
         response->set_mmio_id(mmio_id);
         return grpc::Status::OK;
     }
@@ -725,7 +789,7 @@ class GPIOImpl final : public Gpio::Service
      */
 private:
     std::unordered_map<std::string, std::unique_ptr<GPIO>> gpios_; ///< Map to store GPIO objects
-    uint64_t count = 0;                                            ///< Counter for generating GPIO IDs}
+    HandleGenerator handle_generator_;
 
 public:
     /**
@@ -744,7 +808,7 @@ public:
     {
         std::size_t released = gpios_.size();
         gpios_.clear();
-        count = 0;
+        handle_generator_.advance_epoch();
         return released;
     }
 
@@ -780,9 +844,15 @@ public:
                   << "direction=" << request->direction()
                   << std::endl;
         #endif
-        std::string gpio_id = std::to_string(count);
+        std::string gpio_id;
+        if (!handle_generator_.try_generate(gpio_id))
+        {
+            return grpc::Status(
+                grpc::StatusCode::RESOURCE_EXHAUSTED,
+                "GPIO ID space exhausted."
+            );
+        }
         addGPIO(request->index(), request->direction(), gpio_id);
-        count += 1;
         response->set_gpio_id(gpio_id);
         return grpc::Status::OK;
     }

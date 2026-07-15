@@ -710,5 +710,6 @@ class Clocks(metaclass=_ClocksMeta):
         device : Device
 
         """
+        if cls.device is not device and hasattr(cls, "_real_instance"):
+            del cls._real_instance
         cls.device = device
-

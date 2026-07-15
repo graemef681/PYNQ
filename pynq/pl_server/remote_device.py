@@ -102,7 +102,9 @@ class RemoteBitstreamHandler(BitstreamHandler):
                 try:
                     parser = self._get_cache() 
                 except CacheMetadataError:
-                    parser = RuntimeMetadataParser(Metadata(input=self._filepath.with_suffix(".hwh")))
+                    parser = RuntimeMetadataParser(
+                        Metadata(input=str(self._filepath.with_suffix(".hwh")))
+                    )
                 except:
                     raise RuntimeError(f"Unable to parse metadata")
 
@@ -112,7 +114,7 @@ class RemoteBitstreamHandler(BitstreamHandler):
             if not partial:
                 parser.refresh_hierarchy_dict()
         elif is_xsa:
-            parser = RuntimeMetadataParser(Metadata(input=self._filepath))
+            parser = RuntimeMetadataParser(Metadata(input=str(self._filepath)))
             xclbin_parser = XclBin(xclbin_data=xclbin_data)
             _unify_dictionaries(parser, xclbin_parser)
             parser.refresh_hierarchy_dict()
@@ -349,7 +351,9 @@ class RemoteDevice(Device):
                     for reg_name in ZU_FPD_SLCR_REG[para]:
                         addr = ZU_FPD_SLCR_REG[para][reg_name]["addr"]
                         f = ZU_FPD_SLCR_REG[para][reg_name]["field"]
-                        Register(addr)[f[0] : f[1]] = ZU_FPD_SLCR_VALUE[width]
+                        Register(addr, device=self)[f[0] : f[1]] = (
+                            ZU_FPD_SLCR_VALUE[width]
+                        )
 
             for para in ZU_AXIFM_REG:
                 if para in parameter_dict:
@@ -357,7 +361,9 @@ class RemoteDevice(Device):
                     for reg_name in ZU_AXIFM_REG[para]:
                         addr = ZU_AXIFM_REG[para][reg_name]["addr"]
                         f = ZU_AXIFM_REG[para][reg_name]["field"]
-                        Register(addr)[f[0] : f[1]] = ZU_AXIFM_VALUE[width]
+                        Register(addr, device=self)[f[0] : f[1]] = (
+                            ZU_AXIFM_VALUE[width]
+                        )
 
     def gen_cache(self, bitstream, parser=None):
         """ Generates the cache of the metadata even if no download occurred """
@@ -412,6 +418,7 @@ class RemoteDevice(Device):
         response = self._stub['device'].cleanup(remote_device_pb2.CleanupRequest())
         if response.msg:
             raise RuntimeError(response.msg)
+        self._invalidate_client_caches()
         return response
 
     def close(self):
@@ -421,6 +428,25 @@ class RemoteDevice(Device):
         self._closed = True
         try:
             self.cleanup()
+        except Exception:
+            pass
+
+    def _invalidate_client_caches(self):
+        """Drop client-side objects whose remote handles were globally cleared."""
+        try:
+            from pynq.ps import Clocks
+
+            clock_device = getattr(Clocks, "device", None)
+            is_remote_clock_device = (
+                clock_device is not None
+                and hasattr(clock_device, "has_capability")
+                and clock_device.has_capability("REMOTE")
+            )
+            if (
+                hasattr(Clocks, "_real_instance")
+                and (clock_device is self or is_remote_clock_device)
+            ):
+                del Clocks._real_instance
         except Exception:
             pass
 
@@ -448,8 +474,6 @@ class RemoteDevice(Device):
             bitstream.binfile_name = Path(bitstream.bitfile_name).stem + ".bin"
             
         if not bitstream.partial:
-            if self.auto_cleanup:
-                self.cleanup()
             self.shutdown()
             self.gen_cache(bitstream, parser)
             flag = "0"
@@ -592,11 +616,16 @@ class RemoteGPIO:
         self.gpio_index = gpio_index
         self._direction = direction
         self._stub = device._stub['gpio']
+        self._released = False
         
         response = self._stub.get_gpio(
             gpio_pb2.GetGpioRequest(index=gpio_index, direction=direction)
         )
         self._gpio_id = response.gpio_id
+
+    def _ensure_live(self):
+        if self._released:
+            raise RuntimeError("Remote GPIO handle has been released or invalidated.")
         
     def read(self):
         """The method to read a value from the GPIO.
@@ -607,6 +636,7 @@ class RemoteGPIO:
             An integer read from the GPIO
 
         """
+        self._ensure_live()
         if self.direction != 'in':
             raise AttributeError("Cannot read from GPIO output.")
         
@@ -628,6 +658,7 @@ class RemoteGPIO:
         None
 
         """
+        self._ensure_live()
         if self.direction != 'out':
             raise AttributeError("Cannot write to GPIO input.")
         
@@ -647,9 +678,11 @@ class RemoteGPIO:
         None
 
         """
+        self._ensure_live()
         response = self._stub.unexport(
             gpio_pb2.GpioUnexportRequest(gpio_id=self._gpio_id)
         )
+        self._released = True
         
     def release(self):
         """The method to release the GPIO.
@@ -659,8 +692,13 @@ class RemoteGPIO:
         None
 
         """
+        if self._released:
+            return
         self.unexport()
-        
+
+    def close(self):
+        self.release()
+
     def is_exported(self):
         """The method to check if a GPIO is still exported using
         Linux's GPIO Sysfs API.
@@ -671,10 +709,18 @@ class RemoteGPIO:
             True if the GPIO is still loaded.
 
         """
+        if self._released:
+            return False
         response = self._stub.is_exported(
             gpio_pb2.GpioIsExportedRequest(gpio_id=self._gpio_id)
         )
         return bool(response.is_exported)
+
+    def __del__(self):
+        try:
+            self.release()
+        except Exception:
+            pass
     
     @property
     def index(self):
@@ -973,6 +1019,10 @@ class RemoteMMIO:
         fake_buffer = tnp._FakeBuffer(length // 4, stype, hook=self._hook)
         self.array = tnp.ndarray(shape=(length // 4,), dtype="u4", buffer=fake_buffer)
 
+    def _ensure_open(self):
+        if self._closed:
+            raise RuntimeError("Remote MMIO handle has been closed or invalidated.")
+
     def close(self):
         """Release the server-side MMIO mapping."""
         if self._closed:
@@ -983,7 +1033,6 @@ class RemoteMMIO:
         )
         if response.msg:
             raise RuntimeError(response.msg)
-        self.mmio_id = None
 
     def __del__(self):
         try:
@@ -992,6 +1041,7 @@ class RemoteMMIO:
             pass
 
     def read(self, offset=0, length=4, word_order="little"):
+        self._ensure_open()
         if length not in [1, 2, 4, 8]:
             raise ValueError("MMIO currently only supports 1, 2, 4 and 8-byte reads.")
         if offset < 0:
@@ -1010,6 +1060,7 @@ class RemoteMMIO:
         return response.data
 
     def write(self, offset, data):
+        self._ensure_open()
         if offset < 0:
             raise ValueError("Offset cannot be negative.")
         if offset % 4:
@@ -1068,8 +1119,8 @@ class RemoteBuffer(np.ndarray):
         Whether the buffer is cache coherent. Always set to False for RemoteBuffer.
     stub: grpc stub
         gRPC stub for buffer operations.
-    buffer_id: int
-        Unique identifier for the remote buffer.
+    buffer_id: str
+        Opaque server-side handle for the remote buffer.
     freed: bool
         Indicates whether the buffer has been freed.
     device: RemoteDevice
@@ -1089,8 +1140,8 @@ class RemoteBuffer(np.ndarray):
             Data type of the buffer.
         stub : grpc stub
             gRPC stub for buffer operations.
-        buffer_id : int
-            Unique identifier for the remote buffer.
+        buffer_id : str
+            Opaque server-side handle for the remote buffer.
         device : RemoteDevice, optional
             The remote device associated with this buffer. Default is None.
         coherent : bool, optional
@@ -1115,10 +1166,17 @@ class RemoteBuffer(np.ndarray):
             self.stub = obj.stub
             self.buffer_id = obj.buffer_id
             self.device = obj.device
+            self.freed = getattr(obj, "freed", False)
         else:
             self.stub = None
             self.buffer_id = None
             self.coherent = None
+            self.device = None
+            self.freed = True
+
+    def _ensure_live(self):
+        if self.freed:
+            raise RuntimeError("Remote buffer has been freed or invalidated.")
 
     def __del__(self):
         if hasattr(self, 'freed') and not self.freed:
@@ -1144,6 +1202,7 @@ class RemoteBuffer(np.ndarray):
 
     def flush(self):
         """Flush local changes to the remote buffer."""
+        self._ensure_live()
         data_bytes = self.tobytes()
         total_size = len(data_bytes)
 
@@ -1169,6 +1228,7 @@ class RemoteBuffer(np.ndarray):
 
     def invalidate(self):
         """Invalidate the local cache and sync from the remote buffer."""
+        self._ensure_live()
         # Perform an InvalidateRequest to sync PS and PL
         response = self.stub.invalidate(
             buffer_pb2.InvalidateRequest(buffer_id=self.buffer_id)
@@ -1201,6 +1261,7 @@ class RemoteBuffer(np.ndarray):
         
     @property
     def physical_address(self):
+        self._ensure_live()
         response = self.stub.physical_address(
             buffer_pb2.AddressRequest(buffer_id=self.buffer_id)
         )
@@ -1214,6 +1275,7 @@ class RemoteBuffer(np.ndarray):
 
     @property
     def virtual_address(self):
+        self._ensure_live()
         response = self.stub.virtual_address(
             buffer_pb2.AddressRequest(buffer_id=self.buffer_id)
         )
