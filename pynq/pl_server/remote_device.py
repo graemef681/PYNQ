@@ -427,7 +427,14 @@ class RemoteDevice(Device):
             return
         self._closed = True
         try:
+            self._invalidate_client_caches()
             self.cleanup()
+        except Exception:
+            pass
+
+    def __del__(self):
+        try:
+            self.close()
         except Exception:
             pass
 
@@ -437,15 +444,7 @@ class RemoteDevice(Device):
             from pynq.ps import Clocks
 
             clock_device = getattr(Clocks, "device", None)
-            is_remote_clock_device = (
-                clock_device is not None
-                and hasattr(clock_device, "has_capability")
-                and clock_device.has_capability("REMOTE")
-            )
-            if (
-                hasattr(Clocks, "_real_instance")
-                and (clock_device is self or is_remote_clock_device)
-            ):
+            if hasattr(Clocks, "_real_instance") and clock_device is self:
                 del Clocks._real_instance
         except Exception:
             pass
@@ -1158,6 +1157,7 @@ class RemoteBuffer(np.ndarray):
         self.coherent = False  # Always set to False for RemoteBuffer
         self.freed = False
         self.device = device
+        self._owns_buffer = True
         return self
 
     def __array_finalize__(self, obj):
@@ -1166,20 +1166,34 @@ class RemoteBuffer(np.ndarray):
             self.stub = obj.stub
             self.buffer_id = obj.buffer_id
             self.device = obj.device
-            self.freed = getattr(obj, "freed", False)
+            # NumPy creates temporary views for normal operations such as
+            # slice assignment. Keep cleanup ownership on the root allocation.
+            self._owns_buffer = False
         else:
             self.stub = None
             self.buffer_id = None
             self.coherent = None
             self.device = None
             self.freed = True
+            self._owns_buffer = False
 
     def _ensure_live(self):
-        if self.freed:
+        if getattr(self._owner_buffer(), "freed", True):
             raise RuntimeError("Remote buffer has been freed or invalidated.")
 
+    def _owner_buffer(self):
+        owner = self
+        while isinstance(getattr(owner, "base", None), RemoteBuffer):
+            owner = owner.base
+        return owner
+
     def __del__(self):
-        if hasattr(self, 'freed') and not self.freed:
+        if (
+            hasattr(self, 'freed')
+            and hasattr(self, "_owns_buffer")
+            and self._owns_buffer
+            and not self.freed
+        ):
             try:
                 self.freebuffer()
             except Exception:
@@ -1192,6 +1206,10 @@ class RemoteBuffer(np.ndarray):
         Explicitly releases the buffer memory on the remote device.
         Called automatically by destructor.
         """
+        owner = self._owner_buffer()
+        if owner is not self:
+            owner.freebuffer()
+            return
         if not self.freed:
             self.freed = True
             response = self.stub.freebuffer(

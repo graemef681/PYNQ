@@ -218,8 +218,12 @@ public:
     {
         std::size_t released = buffers_.size();
         buffers_.clear();
-        handle_generator_.advance_epoch();
         return released;
+    }
+
+    void advanceHandleEpoch()
+    {
+        handle_generator_.advance_epoch();
     }
 
 private:
@@ -653,8 +657,12 @@ public:
     {
         std::size_t released = mmios_.size();
         mmios_.clear();
-        handle_generator_.advance_epoch();
         return released;
+    }
+
+    void advanceHandleEpoch()
+    {
+        handle_generator_.advance_epoch();
     }
 
     /**
@@ -808,8 +816,12 @@ public:
     {
         std::size_t released = gpios_.size();
         gpios_.clear();
-        handle_generator_.advance_epoch();
         return released;
+    }
+
+    void advanceHandleEpoch()
+    {
+        handle_generator_.advance_epoch();
     }
 
     /**
@@ -1144,6 +1156,22 @@ public:
         if (gpio_service_)
         {
             gpios_freed = gpio_service_->clearGPIOs();
+        }
+
+        if (buffers_freed || mmios_freed || gpios_freed)
+        {
+            if (buffer_service_)
+            {
+                buffer_service_->advanceHandleEpoch();
+            }
+            if (mmio_service_)
+            {
+                mmio_service_->advanceHandleEpoch();
+            }
+            if (gpio_service_)
+            {
+                gpio_service_->advanceHandleEpoch();
+            }
         }
 
 #ifdef DEBUG

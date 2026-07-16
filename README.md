@@ -59,10 +59,11 @@ the PR write-up:
   server handle layer: explicit release and global cleanup both need to remove
   the target-side `/sys/class/gpio/gpioN` export, not just forget the RPC
   handle.
-- Remote cleanup clears server-side buffer, MMIO, and GPIO handle tables and
-  advances a cleanup epoch on the server. New handles are allocated as numbered
-  opaque strings like `epoch:number`, so stale handles from earlier epochs stay
-  invalid even though numbering restarts after cleanup.
+- Remote cleanup clears server-side buffer, MMIO, and GPIO handle tables. If it
+  actually frees any resource, all three handle services advance their cleanup
+  epoch together. New handles are allocated as numbered opaque strings like
+  `epoch:number`, so stale handles from earlier epochs stay invalid even though
+  numbering restarts after cleanup.
 - The `pynq-remote` server now uses the same `epoch:number` handle scheme for
   buffers, MMIOs, and GPIOs, and returns `RESOURCE_EXHAUSTED` if the 64-bit
   epoch/counter space is ever exhausted rather than silently wrapping or
@@ -71,8 +72,17 @@ the PR write-up:
   Without this, `MMIO.__del__()` could release a `RemoteMMIO` too early for
   temporary register operations. This was found while adding `RemoteMMIO`
   cleanup.
+- Remote MMIO cleanup is not about freeing scarce contiguous memory like buffer
+  cleanup. It prevents unbounded growth of the server-side MMIO handle table,
+  releases target-side mapping objects, keeps debug logs/IDs meaningful during
+  long-running sessions, and makes stale host MMIO objects fail instead of
+  accidentally operating through an obsolete server handle.
 - Remote AXI-width setup now passes `device=self` explicitly into
   `Register(...)`, avoiding accidental use of the wrong active device.
+- Remote device close now drops the cached `Clocks` instance only when it
+  belongs to that exact `RemoteDevice`. This lets the clock MMIO destructors
+  release their own server handles before final global cleanup, without
+  disturbing another device in a future multi-board session.
 - We intentionally did not implement host-side invalidation of every stale
   Python `RemoteMMIO` / `RemoteBuffer` / `RemoteGPIO` object on global cleanup
   in this branch. That can be added later with per-endpoint weak tracking for

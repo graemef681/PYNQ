@@ -6,8 +6,8 @@ import os
 import pytest
 import numpy as np
 
-# Setup PYNQ environment variable - REQUIRED for PYNQ.remote to work
-os.environ["PYNQ_REMOTE_DEVICES"] = "192.168.0.238"
+# Keep the convenience default, but still allow callers to override it.
+os.environ.setdefault("PYNQ_REMOTE_DEVICES", "192.168.2.197")
 
 @pytest.mark.remote
 def test_remote():
@@ -23,7 +23,7 @@ def test_remote():
      
     # Get the path to the overlay file in the tests directory
     test_dir = os.path.dirname(os.path.abspath(__file__))
-    overlay_path = os.path.join(test_dir, "resizer.bit")
+    overlay_path = os.path.join(test_dir, "resizer.xsa")
     if not os.path.exists(overlay_path):
         pytest.skip(f"Overlay not found: {overlay_path}")   
 
