@@ -140,10 +140,19 @@ using xrfdc::GetDACCompModeResponse;
 
 namespace {
 
+enum class HandleClassification
+{
+    kValid,
+    kInvalid,
+    kStale,
+    kNotFound,
+};
+
 class HandleGenerator
 {
 private:
     uint64_t epoch_ = 0;
+    uint64_t minimum_valid_epoch_ = 0;
     uint64_t next_id_ = 0;
     bool exhausted_ = false;
 
@@ -175,6 +184,16 @@ public:
         return true;
     }
 
+    uint64_t current_epoch() const
+    {
+        return epoch_;
+    }
+
+    uint64_t minimum_valid_epoch() const
+    {
+        return minimum_valid_epoch_;
+    }
+
     void advance_epoch()
     {
         if (exhausted_)
@@ -187,9 +206,118 @@ public:
             return;
         }
         epoch_ += 1;
+        minimum_valid_epoch_ = epoch_;
         next_id_ = 0;
     }
 };
+
+bool parse_uint64_component(const std::string &text, uint64_t &value)
+{
+    if (text.empty())
+    {
+        return false;
+    }
+
+    uint64_t result = 0;
+    for (char c : text)
+    {
+        if (c < '0' || c > '9')
+        {
+            return false;
+        }
+        uint64_t digit = static_cast<uint64_t>(c - '0');
+        if (result > (std::numeric_limits<uint64_t>::max() - digit) / 10)
+        {
+            return false;
+        }
+        result = result * 10 + digit;
+    }
+
+    value = result;
+    return true;
+}
+
+bool parse_handle_id(const std::string &handle_id, uint64_t &epoch)
+{
+    std::size_t separator = handle_id.find(':');
+    if (separator == std::string::npos ||
+        separator == 0 ||
+        separator == handle_id.size() - 1 ||
+        handle_id.find(':', separator + 1) != std::string::npos)
+    {
+        return false;
+    }
+
+    uint64_t sequence = 0;
+    return parse_uint64_component(handle_id.substr(0, separator), epoch) &&
+           parse_uint64_component(handle_id.substr(separator + 1), sequence);
+}
+
+HandleClassification classify_handle_id(
+    const std::string &handle_id,
+    const HandleGenerator &handle_generator)
+{
+    uint64_t epoch = 0;
+    if (!parse_handle_id(handle_id, epoch))
+    {
+        return HandleClassification::kInvalid;
+    }
+    if (epoch < handle_generator.minimum_valid_epoch())
+    {
+        return HandleClassification::kStale;
+    }
+    if (epoch > handle_generator.current_epoch())
+    {
+        return HandleClassification::kInvalid;
+    }
+    return HandleClassification::kValid;
+}
+
+std::string handle_error_message(
+    const std::string &resource,
+    const std::string &operation,
+    const std::string &id_name,
+    const std::string &handle_id,
+    HandleClassification classification)
+{
+    std::ostringstream message;
+    if (classification == HandleClassification::kInvalid)
+    {
+        message << "Invalid " << resource << " ID";
+    }
+    else if (classification == HandleClassification::kStale)
+    {
+        message << resource << " Object stale";
+    }
+    else if (classification == HandleClassification::kNotFound)
+    {
+        message << resource << " Object not found";
+    }
+    else
+    {
+        message << resource << " Object error";
+    }
+
+    message << " while handling " << operation << "() for "
+            << id_name << "='" << handle_id << "'.";
+    return message.str();
+}
+
+grpc::Status handle_error_status(
+    const std::string &resource,
+    const std::string &operation,
+    const std::string &id_name,
+    const std::string &handle_id,
+    HandleClassification classification)
+{
+    grpc::StatusCode code = classification == HandleClassification::kInvalid
+        ? grpc::StatusCode::INVALID_ARGUMENT
+        : grpc::StatusCode::NOT_FOUND;
+    return grpc::Status(
+        code,
+        handle_error_message(resource, operation, id_name, handle_id, classification)
+    );
+}
 
 } // namespace
 
@@ -224,6 +352,27 @@ public:
     void advanceHandleEpoch()
     {
         handle_generator_.advance_epoch();
+    }
+
+    Status validateBufferId(const std::string &buffer_id, const std::string &operation)
+    {
+        HandleClassification classification = classify_handle_id(buffer_id, handle_generator_);
+        if (classification == HandleClassification::kValid)
+        {
+            return Status::OK;
+        }
+        return handle_error_status("Buffer", operation, "buffer_id", buffer_id, classification);
+    }
+
+    Status bufferNotFoundStatus(const std::string &buffer_id, const std::string &operation)
+    {
+        return handle_error_status(
+            "Buffer",
+            operation,
+            "buffer_id",
+            buffer_id,
+            HandleClassification::kNotFound
+        );
     }
 
 private:
@@ -320,12 +469,18 @@ private:
                 // std::cout << "In start" << std::endl;
                 start = false;
                 // Use the buffer id to get the buffer this stream request associates with once.
+                Status status = validateBufferId(request.buffer_id(), "write");
+                if (!status.ok())
+                {
+                    std::cerr << status.error_message() << std::endl;
+                    return status;
+                }
                 auto it = buffers_.find(request.buffer_id());
                 if (it == buffers_.end())
                 {
-                    std::cerr << "Buffer not found: " << request.buffer_id() << std::endl;
-                    response->set_msg("Buffer not found.");
-                    return Status::OK;
+                    Status status = bufferNotFoundStatus(request.buffer_id(), "write");
+                    std::cerr << status.error_message() << std::endl;
+                    return status;
                 }
 
                 auto buffer = it->second.get();
@@ -377,11 +532,18 @@ private:
         std::cout << "Read Request Received: " << std::endl;
 #endif
 
+        Status status = validateBufferId(request->buffer_id(), "read");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         auto it = buffers_.find(request->buffer_id());
         if (it == buffers_.end())
         {
-            std::cerr << "Buffer not found: " << request->buffer_id() << std::endl;
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Buffer not found.");
+            status = bufferNotFoundStatus(request->buffer_id(), "read");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
 
         auto buffer = it->second.get();
@@ -431,7 +593,8 @@ private:
      *
      * This function processes a request to free a buffer identified by its buffer ID.
      * It searches for the buffer in the internal map and removes it if found.
-     * If the buffer is not found, it returns a NOT_FOUND status.
+     * This RPC is idempotent: stale or already-freed buffer IDs are treated
+     * as success, while malformed IDs are rejected.
      * 
      * @param context The server context for the request.
      * @param request The request containing the buffer ID to be freed.
@@ -443,12 +606,38 @@ private:
 #ifdef DEBUG
         std::cout << "Freebuffer Request Received: " << request->buffer_id() << std::endl;
 #endif
+        HandleClassification classification = classify_handle_id(
+            request->buffer_id(),
+            handle_generator_
+        );
+        if (classification == HandleClassification::kInvalid)
+        {
+            Status status = handle_error_status(
+                "Buffer",
+                "freebuffer",
+                "buffer_id",
+                request->buffer_id(),
+                classification
+            );
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
+        if (classification == HandleClassification::kStale)
+        {
+#ifdef DEBUG
+            std::cout << "Buffer already stale: " << request->buffer_id() << std::endl;
+#endif
+            return grpc::Status::OK;
+        }
+
         // Find the buffer based on the buffer_id in the request
         auto it = buffers_.find(request->buffer_id());
         if (it == buffers_.end())
         {
-            std::cerr << "Buffer not found: " << request->buffer_id() << std::endl;
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Buffer not found.");
+#ifdef DEBUG
+            std::cout << "Buffer already freed: " << request->buffer_id() << std::endl;
+#endif
+            return grpc::Status::OK;
         }
         else
         {
@@ -485,11 +674,18 @@ private:
         std::cout << "Flush Request Received: " << request->buffer_id() << std::endl;
 #endif
         // Find the buffer based on the buffer_id in the request
+        Status status = validateBufferId(request->buffer_id(), "flush");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         auto it = buffers_.find(request->buffer_id());
         if (it == buffers_.end())
         {
-            std::cerr << "Buffer not found: " << request->buffer_id() << std::endl;
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Buffer not found.");
+            status = bufferNotFoundStatus(request->buffer_id(), "flush");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
         auto buffer = it->second.get();
         buffer->flush();
@@ -514,11 +710,18 @@ private:
         std::cout << "Invalidate Request Received: " << request->buffer_id() << std::endl;
 #endif
         // Find the buffer based on the buffer_id in the request
+        Status status = validateBufferId(request->buffer_id(), "invalidate");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         auto it = buffers_.find(request->buffer_id());
         if (it == buffers_.end())
         {
-            std::cerr << "Buffer not found: " << request->buffer_id() << std::endl;
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Buffer not found.");
+            status = bufferNotFoundStatus(request->buffer_id(), "invalidate");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
         auto buffer = it->second.get();
         buffer->invalidate();
@@ -544,11 +747,18 @@ private:
         std::cout << "Physical_address Request Received: " << request->buffer_id() << std::endl;
 #endif
         // Find the buffer based on the buffer_id in the request
+        Status status = validateBufferId(request->buffer_id(), "physical_address");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         auto it = buffers_.find(request->buffer_id());
         if (it == buffers_.end())
         {
-            std::cerr << "Buffer not found: " << request->buffer_id() << std::endl;
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Buffer not found.");
+            status = bufferNotFoundStatus(request->buffer_id(), "physical_address");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
         auto buffer = it->second.get();
         uint64_t paddr = buffer->physical_address();
@@ -578,11 +788,18 @@ private:
         std::cout << "Virtual_address Request Received: " << request->buffer_id() << std::endl;
 #endif
         // Find the buffer based on the buffer_id in the request
+        Status status = validateBufferId(request->buffer_id(), "virtual_address");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         auto it = buffers_.find(request->buffer_id());
         if (it == buffers_.end())
         {
-            std::cerr << "Buffer not found: " << request->buffer_id() << std::endl;
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Buffer not found.");
+            status = bufferNotFoundStatus(request->buffer_id(), "virtual_address");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
         auto buffer = it->second.get();
         uint64_t vaddr = buffer->virtual_address();
@@ -612,11 +829,18 @@ private:
         std::cout << "Cacheable Request Received: " << std::endl;
 #endif
         // Find the buffer based on the buffer_id in the request
+        Status status = validateBufferId(request->buffer_id(), "cacheable");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         auto it = buffers_.find(request->buffer_id());
         if (it == buffers_.end())
         {
-            std::cerr << "Buffer not found: " << request->buffer_id() << std::endl;
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "Buffer not found.");
+            status = bufferNotFoundStatus(request->buffer_id(), "cacheable");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
         auto buffer = it->second.get();
         bool cacheable = buffer->cacheable();
@@ -663,6 +887,27 @@ public:
     void advanceHandleEpoch()
     {
         handle_generator_.advance_epoch();
+    }
+
+    Status validateMMIOId(const std::string &mmio_id, const std::string &operation)
+    {
+        HandleClassification classification = classify_handle_id(mmio_id, handle_generator_);
+        if (classification == HandleClassification::kValid)
+        {
+            return Status::OK;
+        }
+        return handle_error_status("MMIO", operation, "mmio_id", mmio_id, classification);
+    }
+
+    Status mmioNotFoundStatus(const std::string &mmio_id, const std::string &operation)
+    {
+        return handle_error_status(
+            "MMIO",
+            operation,
+            "mmio_id",
+            mmio_id,
+            HandleClassification::kNotFound
+        );
     }
 
     /**
@@ -721,7 +966,28 @@ public:
      */
     Status release_mmio(ServerContext *context, const ReleaseMmioRequest *request, ReleaseMmioResponse *response) override
     {
-        bool released = releaseMMIO(request->mmio_id());
+        HandleClassification classification = classify_handle_id(
+            request->mmio_id(),
+            handle_generator_
+        );
+        if (classification == HandleClassification::kInvalid)
+        {
+            Status status = handle_error_status(
+                "MMIO",
+                "release_mmio",
+                "mmio_id",
+                request->mmio_id(),
+                classification
+            );
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
+
+        bool released = false;
+        if (classification == HandleClassification::kValid)
+        {
+            released = releaseMMIO(request->mmio_id());
+        }
 #ifdef DEBUG
         std::cout << "Function: release_mmio, "
                   << "mmio_id=" << request->mmio_id() << ", "
@@ -742,10 +1008,18 @@ public:
      */
     Status read(ServerContext *context, const ReadRequest *request, ReadResponse *response) override
     {
+        Status status = validateMMIOId(request->mmio_id(), "read");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         MMIO *mmio = findMMIO(request->mmio_id());
         if (!mmio)
         {
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "MMIO Object not found.");
+            status = mmioNotFoundStatus(request->mmio_id(), "read");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
         uint32_t data = mmio->read(request->offset());
         #ifdef DEBUG
@@ -777,10 +1051,18 @@ public:
                   << std::dec
                   << std::endl;
         #endif
+        Status status = validateMMIOId(request->mmio_id(), "write");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         MMIO *mmio = findMMIO(request->mmio_id());
         if (!mmio)
         {
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "MMIO Object not found.");
+            status = mmioNotFoundStatus(request->mmio_id(), "write");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
         uint32_t value;
         std::memcpy(&value, request->data().data(), sizeof(value));
@@ -822,6 +1104,27 @@ public:
     void advanceHandleEpoch()
     {
         handle_generator_.advance_epoch();
+    }
+
+    Status validateGPIOId(const std::string &gpio_id, const std::string &operation)
+    {
+        HandleClassification classification = classify_handle_id(gpio_id, handle_generator_);
+        if (classification == HandleClassification::kValid)
+        {
+            return Status::OK;
+        }
+        return handle_error_status("GPIO", operation, "gpio_id", gpio_id, classification);
+    }
+
+    Status gpioNotFoundStatus(const std::string &gpio_id, const std::string &operation)
+    {
+        return handle_error_status(
+            "GPIO",
+            operation,
+            "gpio_id",
+            gpio_id,
+            HandleClassification::kNotFound
+        );
     }
 
     /**
@@ -879,10 +1182,18 @@ public:
      */
     Status read(ServerContext *context, const GpioReadRequest *request, GpioReadResponse *response) override
     {
+        Status status = validateGPIOId(request->gpio_id(), "read");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         GPIO *gpio = findGPIO(request->gpio_id());
         if (!gpio)
         {
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "GPIO Object not found.");
+            status = gpioNotFoundStatus(request->gpio_id(), "read");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
         uint32_t data = gpio->read();
         #ifdef DEBUG
@@ -912,10 +1223,18 @@ public:
                   << std::dec
                   << std::endl;
         #endif
+        Status status = validateGPIOId(request->gpio_id(), "write");
+        if (!status.ok())
+        {
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
         GPIO *gpio = findGPIO(request->gpio_id());
         if (!gpio)
         {
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "GPIO Object not found.");
+            status = gpioNotFoundStatus(request->gpio_id(), "write");
+            std::cerr << status.error_message() << std::endl;
+            return status;
         }
         gpio->write(request->value());
         return grpc::Status::OK;
@@ -924,6 +1243,8 @@ public:
     /**
      * @brief Handles the Unexport gRPC request.
      * Releases the specified GPIO object based on the request parameters.
+     * This RPC is idempotent: stale or already-unexported GPIO IDs are treated
+     * as success, while malformed IDs are rejected.
      * @param context Server context for the request.
      * @param request GpioUnexportRequest message.
      * @param response GpioUnexportResponse message.
@@ -937,10 +1258,37 @@ public:
                   << std::dec
                   << std::endl;
         #endif
+        HandleClassification classification = classify_handle_id(
+            request->gpio_id(),
+            handle_generator_
+        );
+        if (classification == HandleClassification::kInvalid)
+        {
+            Status status = handle_error_status(
+                "GPIO",
+                "unexport",
+                "gpio_id",
+                request->gpio_id(),
+                classification
+            );
+            std::cerr << status.error_message() << std::endl;
+            return status;
+        }
+        if (classification == HandleClassification::kStale)
+        {
+#ifdef DEBUG
+            std::cout << "GPIO already stale: " << request->gpio_id() << std::endl;
+#endif
+            return grpc::Status::OK;
+        }
+
         GPIO *gpio = findGPIO(request->gpio_id());
         if (!gpio)
         {
-            return grpc::Status(grpc::StatusCode::NOT_FOUND, "GPIO Object not found.");
+#ifdef DEBUG
+            std::cout << "GPIO already unexported: " << request->gpio_id() << std::endl;
+#endif
+            return grpc::Status::OK;
         }
         gpio->unexport();
         gpios_.erase(request->gpio_id());
