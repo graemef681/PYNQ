@@ -418,6 +418,14 @@ class Overlay(Bitstream):
             The path of the dtbo file.
 
         """
+        Clocks.set_device(self.device)
+        has_capability = getattr(self.device, "has_capability", lambda _: False)
+        if (
+            has_capability("REMOTE")
+            and getattr(self.device, "auto_cleanup", False)
+            and hasattr(self.device, "cleanup")
+        ):
+            self.device.cleanup()
         for i in self.clock_dict:
             if "enable" in self.clock_dict[i]:
                 enable = self.clock_dict[i]["enable"]
